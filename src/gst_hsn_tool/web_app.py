@@ -356,58 +356,72 @@ def _bulk_upload_tab() -> None:
                     deep_google_all = st.checkbox("Deep Google for every item (slower)", value=False)
 
                 unresolved_prev = st.session_state.get("bulk_unresolved_names", [])
+                st.markdown("### 🔁 Unresolved Retry Tools")
                 if unresolved_prev:
                     st.warning(f"Previous run has {len(unresolved_prev)} unresolved rows.")
-                    retry_col1, retry_col2 = st.columns(2)
-                    with retry_col1:
-                        if st.button("🔁 Retry unresolved with deep Google", use_container_width=True, key="retry_unresolved_btn"):
-                            retry_rows, retry_success = _run_bulk_lookup_batch(
-                                unresolved_prev,
-                                max_workers=max_workers,
-                                dedupe_names=True,
-                                show_live_details=show_live_details,
-                                fast_local_first=False,
-                                deep_google_all=True,
-                                search_if_not_found=True,
-                                similar_threshold=80,
-                            )
+                else:
+                    st.info("No unresolved rows stored yet. Run a bulk lookup first.")
 
-                            st.success(f"✅ Retry complete! Resolved {retry_success}/{len(unresolved_prev)} unresolved rows")
-                            retry_df = pd.DataFrame(retry_rows)
-                            st.dataframe(retry_df, use_container_width=True)
+                retry_col1, retry_col2 = st.columns(2)
+                with retry_col1:
+                    if st.button(
+                        "🔁 Retry unresolved with deep Google",
+                        use_container_width=True,
+                        key="retry_unresolved_btn",
+                        disabled=not unresolved_prev,
+                    ):
+                        retry_rows, retry_success = _run_bulk_lookup_batch(
+                            unresolved_prev,
+                            max_workers=max_workers,
+                            dedupe_names=True,
+                            show_live_details=show_live_details,
+                            fast_local_first=False,
+                            deep_google_all=True,
+                            search_if_not_found=True,
+                            similar_threshold=80,
+                        )
 
-                            still_unresolved = [
-                                str(r.get("input_name", "")).strip()
-                                for r in retry_rows
-                                if not str(r.get("hsn_4digit") or "").strip()
-                            ]
-                            st.session_state["bulk_unresolved_names"] = still_unresolved
-                            st.info(f"Remaining unresolved after retry: {len(still_unresolved)}")
+                        st.success(f"✅ Retry complete! Resolved {retry_success}/{len(unresolved_prev)} unresolved rows")
+                        retry_df = pd.DataFrame(retry_rows)
+                        st.dataframe(retry_df, use_container_width=True)
 
-                    with retry_col2:
-                        if st.button("⚡ Retry unresolved (Relaxed local + master only)", use_container_width=True, key="retry_unresolved_local_btn"):
-                            retry_rows, retry_success = _run_bulk_lookup_batch(
-                                unresolved_prev,
-                                max_workers=max_workers,
-                                dedupe_names=True,
-                                show_live_details=show_live_details,
-                                fast_local_first=True,
-                                deep_google_all=False,
-                                search_if_not_found=False,
-                                similar_threshold=65,
-                            )
+                        still_unresolved = [
+                            str(r.get("input_name", "")).strip()
+                            for r in retry_rows
+                            if not str(r.get("hsn_4digit") or "").strip()
+                        ]
+                        st.session_state["bulk_unresolved_names"] = still_unresolved
+                        st.info(f"Remaining unresolved after retry: {len(still_unresolved)}")
 
-                            st.success(f"✅ Local retry complete! Resolved {retry_success}/{len(unresolved_prev)} unresolved rows")
-                            retry_df = pd.DataFrame(retry_rows)
-                            st.dataframe(retry_df, use_container_width=True)
+                with retry_col2:
+                    if st.button(
+                        "⚡ Retry unresolved (Relaxed local + master only)",
+                        use_container_width=True,
+                        key="retry_unresolved_local_btn",
+                        disabled=not unresolved_prev,
+                    ):
+                        retry_rows, retry_success = _run_bulk_lookup_batch(
+                            unresolved_prev,
+                            max_workers=max_workers,
+                            dedupe_names=True,
+                            show_live_details=show_live_details,
+                            fast_local_first=True,
+                            deep_google_all=False,
+                            search_if_not_found=False,
+                            similar_threshold=65,
+                        )
 
-                            still_unresolved = [
-                                str(r.get("input_name", "")).strip()
-                                for r in retry_rows
-                                if not str(r.get("hsn_4digit") or "").strip()
-                            ]
-                            st.session_state["bulk_unresolved_names"] = still_unresolved
-                            st.info(f"Remaining unresolved after local retry: {len(still_unresolved)}")
+                        st.success(f"✅ Local retry complete! Resolved {retry_success}/{len(unresolved_prev)} unresolved rows")
+                        retry_df = pd.DataFrame(retry_rows)
+                        st.dataframe(retry_df, use_container_width=True)
+
+                        still_unresolved = [
+                            str(r.get("input_name", "")).strip()
+                            for r in retry_rows
+                            if not str(r.get("hsn_4digit") or "").strip()
+                        ]
+                        st.session_state["bulk_unresolved_names"] = still_unresolved
+                        st.info(f"Remaining unresolved after local retry: {len(still_unresolved)}")
                 
                 # Start lookup button
                 if st.button("🚀 Start Auto-Lookup (Background)", use_container_width=True):
@@ -444,6 +458,58 @@ def _bulk_upload_tab() -> None:
                         if not str(r.get("hsn_4digit") or "").strip()
                     ]
                     st.session_state["bulk_unresolved_names"] = unresolved_names
+
+                    st.markdown("### 🔁 Retry These Unresolved Rows Now")
+                    if unresolved_names:
+                        st.warning(f"Current run unresolved rows: {len(unresolved_names)}")
+                        post_col1, post_col2 = st.columns(2)
+                        with post_col1:
+                            if st.button("🔁 Deep Google Retry (current unresolved)", use_container_width=True, key="post_retry_deep"):
+                                retry_rows, retry_success = _run_bulk_lookup_batch(
+                                    unresolved_names,
+                                    max_workers=max_workers,
+                                    dedupe_names=True,
+                                    show_live_details=show_live_details,
+                                    fast_local_first=False,
+                                    deep_google_all=True,
+                                    search_if_not_found=True,
+                                    similar_threshold=80,
+                                )
+                                st.success(f"✅ Deep retry resolved {retry_success}/{len(unresolved_names)}")
+                                st.dataframe(pd.DataFrame(retry_rows), use_container_width=True)
+
+                                still_unresolved = [
+                                    str(r.get("input_name", "")).strip()
+                                    for r in retry_rows
+                                    if not str(r.get("hsn_4digit") or "").strip()
+                                ]
+                                st.session_state["bulk_unresolved_names"] = still_unresolved
+                                st.info(f"Remaining unresolved after deep retry: {len(still_unresolved)}")
+
+                        with post_col2:
+                            if st.button("⚡ Relaxed Local Retry (current unresolved)", use_container_width=True, key="post_retry_local"):
+                                retry_rows, retry_success = _run_bulk_lookup_batch(
+                                    unresolved_names,
+                                    max_workers=max_workers,
+                                    dedupe_names=True,
+                                    show_live_details=show_live_details,
+                                    fast_local_first=True,
+                                    deep_google_all=False,
+                                    search_if_not_found=False,
+                                    similar_threshold=65,
+                                )
+                                st.success(f"✅ Local retry resolved {retry_success}/{len(unresolved_names)}")
+                                st.dataframe(pd.DataFrame(retry_rows), use_container_width=True)
+
+                                still_unresolved = [
+                                    str(r.get("input_name", "")).strip()
+                                    for r in retry_rows
+                                    if not str(r.get("hsn_4digit") or "").strip()
+                                ]
+                                st.session_state["bulk_unresolved_names"] = still_unresolved
+                                st.info(f"Remaining unresolved after local retry: {len(still_unresolved)}")
+                    else:
+                        st.info("No unresolved rows from current run.")
                     
                     # Download options
                     st.divider()
