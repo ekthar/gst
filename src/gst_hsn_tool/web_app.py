@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import csv
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -14,6 +15,9 @@ from typing import Optional
 import streamlit as st
 import pandas as pd
 from openpyxl import load_workbook
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from gst_hsn_tool import db
 from gst_hsn_tool.lookup import lookup_product_by_name, bulk_lookup_products
