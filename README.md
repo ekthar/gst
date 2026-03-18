@@ -31,6 +31,8 @@ Web UI features:
 
 - Mapping tab (run file mapping)
 - AI Training tab (Google-only training)
+- One-click `Run Training` with automatic backup zip creation
+- Download backup zip directly from browser after run
 - Google Inputs tab (edit product names and Google queries)
 
 ## Windows desktop app

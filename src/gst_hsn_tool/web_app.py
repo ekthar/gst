@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
 
 from gst_hsn_tool.config import (
+    DEFAULT_BACKUP_FILE,
     LEARNING_DB_PATH,
     TRAINING_CORPUS_FILE,
     TRAINING_GOOGLE_PRODUCTS_FILE,
     TRAINING_GOOGLE_QUERIES_FILE,
 )
 from gst_hsn_tool.pipeline import run_pipeline
-from gst_hsn_tool.training import run_training_mode
+from gst_hsn_tool.training import backup_training_state, run_training_mode
 
 
 def _read_text(path: str) -> str:
@@ -120,6 +122,12 @@ def _training_tab() -> None:
 
     log_box = st.empty()
 
+    backup_col1, backup_col2 = st.columns([2, 3])
+    with backup_col1:
+        auto_backup = st.checkbox("Auto backup after AI run", value=True)
+    with backup_col2:
+        backup_dir = st.text_input("Backup folder", value="data/backups")
+
     if st.button("Run Training", type="primary", use_container_width=False):
         logs: list[str] = []
 
@@ -136,6 +144,49 @@ def _training_tab() -> None:
             else:
                 st.success("Training completed")
                 st.json(summary)
+
+                if auto_backup:
+                    try:
+                        backup_root = Path(backup_dir.strip() or "data/backups")
+                        backup_root.mkdir(parents=True, exist_ok=True)
+                        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        backup_path = backup_root / f"gst_training_backup_{stamp}.zip"
+                        actual_backup = backup_training_state(backup_path)
+                    except Exception as exc:
+                        st.warning(f"Training finished, but backup failed: {exc}")
+                    else:
+                        st.success(f"Backup created: {actual_backup}")
+                        data = actual_backup.read_bytes()
+                        st.download_button(
+                            label="Download backup zip",
+                            data=data,
+                            file_name=actual_backup.name,
+                            mime="application/zip",
+                        )
+
+    st.markdown("### Quick Backup")
+    st.caption("Use this to create and download a backup without running training.")
+    if st.button("Create Backup Now"):
+        try:
+            backup_root = Path(backup_dir.strip() or "data/backups")
+            backup_root.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_path = backup_root / f"gst_training_backup_{stamp}.zip"
+            actual_backup = backup_training_state(backup_path)
+        except Exception as exc:
+            st.error(f"Backup failed: {exc}")
+        else:
+            st.success(f"Backup created: {actual_backup}")
+            data = actual_backup.read_bytes()
+            st.download_button(
+                label="Download backup zip",
+                data=data,
+                file_name=actual_backup.name,
+                mime="application/zip",
+                key="download_backup_now",
+            )
+
+    st.caption(f"Default backup path in app config: {DEFAULT_BACKUP_FILE}")
 
 
 def _settings_tab() -> None:
