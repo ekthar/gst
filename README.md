@@ -2,6 +2,37 @@
 
 Offline-first tool to process client Excel files, normalize/resolve HSN to 8-digit candidates, and export review-ready outputs.
 
+## Linux Azure Web UI (recommended for Linux servers)
+
+If you only have an Azure Linux server, use browser UI with Streamlit.
+
+Start web UI:
+
+```bash
+python -m streamlit run src/gst_hsn_tool/web_app.py --server.address 0.0.0.0 --server.port 8501
+```
+
+Open in browser:
+
+- `http://<your-azure-public-ip>:8501`
+
+Azure Network Security Group rule required:
+
+- Allow inbound TCP `8501` from your trusted IP.
+
+Run in background on server:
+
+```bash
+nohup python -m streamlit run src/gst_hsn_tool/web_app.py --server.address 0.0.0.0 --server.port 8501 > webui.log 2>&1 &
+tail -f webui.log
+```
+
+Web UI features:
+
+- Mapping tab (run file mapping)
+- AI Training tab (Google-only training)
+- Google Inputs tab (edit product names and Google queries)
+
 ## Windows desktop app
 
 After installation, start the UI app:
