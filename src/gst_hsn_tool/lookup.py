@@ -153,8 +153,8 @@ def _search_google_for_hsn(product_name: str, num_results: int = 5) -> Optional[
             # Extract HSN and category
             extraction = extract_hsn_from_google_result(html_text, product_name)
             
-            # If we found at least category or HSN, return it
-            if extraction.get('category') or extraction.get('hsn_4digit') or extraction.get('hsn_8digit'):
+            # Accept only if HSN digits were found to avoid unrelated category-only matches.
+            if extraction.get('hsn_4digit') or extraction.get('hsn_8digit'):
                 extraction['source_url'] = url
                 return extraction
             
@@ -175,20 +175,47 @@ def _fallback_hsn_guess(product_name: str) -> Optional[Dict[str, Any]]:
     keywords = product_name.lower().split()
     
     category_map = {
-        # Food & Beverages
-        ('chocolate', 'cadbury', 'biscuit', 'cookie', 'candy', 'confection'): ('Food & Beverages', '2106'),
-        ('coffee', 'tea', 'beverage', 'drink', 'juice'): ('Food & Beverages', '2202'),
+        # Stationery / office supplies
+        ('ink',): ('Stationery', '3215'),
+        ('scale', 'ruler'): ('Stationery', '9017'),
+        ('sticker',): ('Printed Material', '4911'),
+        ('tag',): ('Paper Articles', '4821'),
+        ('chalk',): ('Stationery', '9609'),
+        ('envelop', 'envelope'): ('Paper Articles', '4817'),
+
+        # Household plastic/cleaning
+        ('dust', 'dustpan'): ('Household Articles', '3924'),
+        ('tray',): ('Household Articles', '3924'),
+        ('cover',): ('Household Articles', '3924'),
+        ('clean', 'cleaner', 'cleaning', 'scrub', 'scrubber'): ('Household Articles', '3924'),
+        ('pazhakazthi', 'kazthi', 'broom', 'wiper', 'sweeper'): ('Household Articles', '9603'),
+        ('mat',): ('Floor Coverings', '5705'),
+        ('soap', 'box'): ('Household Articles', '3924'),
+
+        # Food & beverages
+        ('sunfeast', 'bingo', 'biscuit', 'cookie', 'cracker'): ('Food & Beverages', '1905'),
+        ('cadbury', 'chocolate', 'candy', 'toffee', 'orbit'): ('Food & Beverages', '1704'),
+        ('tea', 'coffee', 'beverage', 'drink', 'juice', '7up', 'lemon'): ('Food & Beverages', '2202'),
+        ('rice',): ('Agricultural Products', '1006'),
+        ('sugar',): ('Agricultural Products', '1701'),
         ('egg', 'eggs', 'poultry', 'hen'): ('Animal Products', '0407'),
-        
+        ('coconut',): ('Agricultural Products', '0801'),
+
+        # Hardware / misc
+        ('m-seal', 'mseal', 'epoxy', 'compound', 'adhesive'): ('Chemical Products', '3506'),
+        ('carrom', 'striker'): ('Sports Goods', '9504'),
+        ('hair', 'band'): ('Accessories', '9615'),
+        ('ring', 'stud', 'pearl', 'button', 'buttons'): ('Accessories', '7117'),
+
         # Electronics
         ('laptop', 'computer', 'phone', 'mobile', 'iphone', 'samsung'): ('Electronics', '8471'),
         ('tv', 'monitor', 'display', 'screen'): ('Electronics', '8528'),
-        
+
         # Textiles
         ('cotton', 'fabric', 'cloth', 'textile', 'shirt', 'pant', 'dress'): ('Textiles', '5208'),
-        
-        # Cosmetics
-        ('soap', 'shampoo', 'cosmetic', 'beauty', 'cream', 'lotion'): ('Cosmetics', '3304'),
+
+        # Cosmetics / personal care
+        ('shampoo', 'cosmetic', 'beauty', 'lotion', 'cream'): ('Cosmetics', '3304'),
     }
     
     # Try to match keywords
