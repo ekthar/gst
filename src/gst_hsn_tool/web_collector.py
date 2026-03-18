@@ -23,7 +23,10 @@ DEFAULT_SEED_URLS = [
     "https://cleartax.in/s/gst-hsn-lookup",
 ]
 
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) GST-HSN-Collector/1.0"
+USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
 GOOGLE_SEARCH_URL = "https://www.google.com/search"
 
 DEFAULT_GOOGLE_QUERIES = [
@@ -298,7 +301,7 @@ def _discover_urls_from_google(
         for start in range(0, max_results_per_query, 10):
             search_url = (
                 f"{GOOGLE_SEARCH_URL}?q={urllib.parse.quote_plus(query)}"
-                f"&num=10&hl=en&start={start}"
+                f"&num=10&hl=en&gl=in&pws=0&gbv=1&start={start}"
             )
             try:
                 body, _ = _fetch_url(search_url)
@@ -331,10 +334,30 @@ def _extract_google_result_links(html_text: str) -> List[str]:
     seen: Set[str] = set()
 
     # Standard Google result target format.
-    for match in re.findall(r'href=["\']/url\?q=([^"\'&]+)', html_text, flags=re.IGNORECASE):
+    for match in re.findall(r'href=["\']/url\?(?:q|url)=([^"\'&]+)', html_text, flags=re.IGNORECASE):
         url = urllib.parse.unquote(match)
         if not url.startswith(("http://", "https://")):
             continue
+        if "google." in urllib.parse.urlparse(url).netloc.lower():
+            continue
+        if url not in seen:
+            seen.add(url)
+            links.append(url)
+
+    # Full absolute Google redirect format.
+    for match in re.findall(r'href=["\']https?://(?:www\.)?google\.[^/]+/url\?(?:q|url)=([^"\'&]+)', html_text, flags=re.IGNORECASE):
+        url = urllib.parse.unquote(match)
+        if not url.startswith(("http://", "https://")):
+            continue
+        if "google." in urllib.parse.urlparse(url).netloc.lower():
+            continue
+        if url not in seen:
+            seen.add(url)
+            links.append(url)
+
+    # Data attributes sometimes include direct result URL.
+    for match in re.findall(r'data-url=["\'](https?://[^"\']+)["\']', html_text, flags=re.IGNORECASE):
+        url = html.unescape(match)
         if "google." in urllib.parse.urlparse(url).netloc.lower():
             continue
         if url not in seen:
