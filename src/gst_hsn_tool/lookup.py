@@ -37,24 +37,29 @@ def lookup_product_by_name(
         Or None if not found and search_if_not_found=False
     """
     
+    cleaned_name = product_name.strip()
+
     # First, check for similar products in DB
-    similar = similarity.find_similar_in_db(product_name.strip())
+    similar = similarity.find_similar_in_db(cleaned_name)
     
     if similar:
         # Found in DB
         return {
             **similar,
+            'input_name': cleaned_name,
+            'matched_name': similar.get('name'),
+            'name': cleaned_name,
             'is_new': False
         }
     
     # Not in DB, try Google search if enabled
     if search_if_not_found:
-        result = _search_google_for_hsn(product_name.strip())
+        result = _search_google_for_hsn(cleaned_name)
         
-        if result and auto_store:
+        if result and auto_store and result.get('hsn_4digit'):
             # Store in DB
             db.insert_product(
-                name=product_name.strip(),
+                name=cleaned_name,
                 category=result.get('category'),
                 hsn_4digit=result.get('hsn_4digit'),
                 hsn_8digit=result.get('hsn_8digit'),
@@ -62,6 +67,9 @@ def lookup_product_by_name(
             )
         
         if result:
+            result['input_name'] = cleaned_name
+            result['matched_name'] = cleaned_name
+            result['name'] = cleaned_name
             result['is_new'] = True
             result['match_type'] = 'google_search'
         
@@ -113,7 +121,7 @@ def _search_google_for_hsn(product_name: str, num_results: int = 5) -> Optional[
     return _fallback_hsn_guess(product_name)
 
 
-def _fallback_hsn_guess(product_name: str) -> Dict[str, Any]:
+def _fallback_hsn_guess(product_name: str) -> Optional[Dict[str, Any]]:
     """
     Fallback method to guess HSN category based on product name keywords.
     """
@@ -146,13 +154,8 @@ def _fallback_hsn_guess(product_name: str) -> Dict[str, Any]:
                     'source_url': None
                 }
     
-    # Default
-    return {
-        'category': 'Miscellaneous',
-        'hsn_4digit': '9999',
-        'hsn_8digit': None,
-        'source_url': None
-    }
+    # Unknown products should remain not_found instead of polluting DB with 9999.
+    return None
 
 
 def _get_google_search_urls(query: str, num_results: int = 5) -> list:

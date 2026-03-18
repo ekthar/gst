@@ -250,8 +250,20 @@ def _bulk_upload_tab() -> None:
                             )
                             
                             if result:
-                                all_results.append(result)
-                                success_count += 1
+                                row = {
+                                    'input_name': product_name.strip(),
+                                    'matched_name': result.get('matched_name') or result.get('name') or product_name.strip(),
+                                    'category': result.get('category'),
+                                    'hsn_4digit': result.get('hsn_4digit'),
+                                    'hsn_8digit': result.get('hsn_8digit'),
+                                    'source_url': result.get('source_url'),
+                                    'match_type': result.get('match_type', 'unknown'),
+                                    'confidence': result.get('confidence'),
+                                    'is_new': result.get('is_new', False),
+                                }
+                                all_results.append(row)
+                                if row['hsn_4digit']:
+                                    success_count += 1
                                 
                                 # Show real-time result in expandable section
                                 with results_container:
@@ -273,20 +285,28 @@ def _bulk_upload_tab() -> None:
                                         st.write(f"**Match Type:** {result.get('match_type', 'unknown').replace('_', ' ').title()}")
                             else:
                                 all_results.append({
-                                    'name': product_name,
+                                    'input_name': product_name,
+                                    'matched_name': None,
                                     'category': None,
                                     'hsn_4digit': None,
                                     'hsn_8digit': None,
-                                    'match_type': 'not_found'
+                                    'source_url': None,
+                                    'match_type': 'not_found',
+                                    'confidence': None,
+                                    'is_new': False,
                                 })
                         
                         except Exception as e:
                             all_results.append({
-                                'name': product_name,
+                                'input_name': product_name,
+                                'matched_name': None,
                                 'category': 'Error',
                                 'hsn_4digit': None,
                                 'hsn_8digit': None,
-                                'match_type': f'error: {str(e)[:30]}'
+                                'source_url': None,
+                                'match_type': f'error: {str(e)[:30]}',
+                                'confidence': None,
+                                'is_new': False,
                             })
                         
                         # Small delay to avoid throttling
