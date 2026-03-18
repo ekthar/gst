@@ -17,7 +17,7 @@ if __name__ == "__main__":
     # Add to environment
     env = os.environ.copy()
     if "PYTHONPATH" in env:
-        env["PYTHONPATH"] = f"{src_path}:{env['PYTHONPATH']}"
+        env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
     else:
         env["PYTHONPATH"] = str(src_path)
     
@@ -30,9 +30,18 @@ if __name__ == "__main__":
         str(repo_root / "src" / "gst_hsn_tool" / "web_app.py"),
     ]
     
-    # Add any extra arguments passed to this script
-    if len(sys.argv) > 1:
-        cmd.extend(sys.argv[1:])
+    args = sys.argv[1:]
+    if "--local" in args:
+        args = [a for a in args if a != "--local"]
+        args.extend(["--server.address", "127.0.0.1", "--server.port", "8501"])
+    elif "--azure" in args:
+        args = [a for a in args if a != "--azure"]
+        args.extend(["--server.address", "0.0.0.0", "--server.port", "8501"])
+    elif not args:
+        # Default mode: local machine
+        args = ["--server.address", "127.0.0.1", "--server.port", "8501"]
+
+    cmd.extend(args)
     
     # Run streamlit
     try:

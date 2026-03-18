@@ -45,6 +45,110 @@ def _canonical_name_key(name: str) -> str:
     return text
 
 
+def _run_bulk_lookup_batch(
+    product_names: list[str],
+    *,
+    max_workers: int,
+    dedupe_names: bool,
+    show_live_details: bool,
+    fast_local_first: bool,
+    deep_google_all: bool,
+) -> tuple[list[dict], int]:
+    """Run one bulk lookup batch with progress UI and return rows + success count."""
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    results_container = st.container()
+
+    all_results: list[dict | None] = [None] * len(product_names)
+    success_count = 0
+    processed = 0
+
+    key_to_indexes: dict[str, list[int]] = {}
+    key_to_name: dict[str, str] = {}
+    for idx, raw_name in enumerate(product_names):
+        cleaned = str(raw_name).strip()
+        canonical = _canonical_name_key(cleaned)
+        key_base = canonical if canonical else cleaned.lower()
+        key = key_base if dedupe_names else f"{idx}:{key_base}"
+        key_to_name.setdefault(key, cleaned)
+        key_to_indexes.setdefault(key, []).append(idx)
+
+    effective_fast_local_first = fast_local_first and not deep_google_all
+    force_google = deep_google_all
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_map = {
+            executor.submit(
+                lookup_product_by_name,
+                key_to_name[key],
+                True,
+                True,
+                force_google,
+                effective_fast_local_first,
+            ): key
+            for key in key_to_indexes
+        }
+
+        for future in as_completed(future_map):
+            key = future_map[future]
+            canonical_name = key_to_name[key]
+            indexes = key_to_indexes[key]
+
+            result = None
+            error_text = None
+            try:
+                result = future.result()
+            except Exception as exc:
+                error_text = str(exc)[:60]
+
+            for row_idx in indexes:
+                original_name = str(product_names[row_idx]).strip()
+                if result:
+                    row = {
+                        "input_name": original_name,
+                        "matched_name": result.get("matched_name") or result.get("name") or original_name,
+                        "category": result.get("category"),
+                        "hsn_4digit": result.get("hsn_4digit"),
+                        "hsn_8digit": result.get("hsn_8digit"),
+                        "source_url": result.get("source_url"),
+                        "match_type": result.get("match_type", "unknown"),
+                        "confidence": result.get("confidence"),
+                        "is_new": result.get("is_new", False),
+                    }
+                    all_results[row_idx] = row
+                    if row["hsn_4digit"]:
+                        success_count += 1
+                else:
+                    all_results[row_idx] = {
+                        "input_name": original_name,
+                        "matched_name": None,
+                        "category": "Error" if error_text else None,
+                        "hsn_4digit": None,
+                        "hsn_8digit": None,
+                        "source_url": None,
+                        "match_type": f"error: {error_text}" if error_text else "not_found",
+                        "confidence": None,
+                        "is_new": False,
+                    }
+                processed += 1
+
+            progress = processed / max(1, len(product_names))
+            progress_bar.progress(progress)
+            status_text.text(
+                f"⏳ Processing: {processed}/{len(product_names)} | ✅ Saved: {success_count} | ⚡ Workers: {max_workers}"
+            )
+
+            if show_live_details:
+                with results_container:
+                    outcome = result.get("hsn_4digit") if result else "N/A"
+                    st.caption(f"{canonical_name} -> HSN {outcome}")
+
+    progress_bar.progress(1.0)
+    status_text.empty()
+    rows = [r for r in all_results if r is not None]
+    return rows, success_count
+
+
 def _read_text(path: str) -> str:
     p = Path(path)
     if not p.exists():
@@ -247,101 +351,42 @@ def _bulk_upload_tab() -> None:
                     fast_local_first = st.checkbox("Hybrid fast mode (local/master first)", value=True)
                 with strategy_col2:
                     deep_google_all = st.checkbox("Deep Google for every item (slower)", value=False)
+
+                unresolved_prev = st.session_state.get("bulk_unresolved_names", [])
+                if unresolved_prev:
+                    st.warning(f"Previous run has {len(unresolved_prev)} unresolved rows.")
+                    if st.button("🔁 Retry unresolved with deep Google", use_container_width=True, key="retry_unresolved_btn"):
+                        retry_rows, retry_success = _run_bulk_lookup_batch(
+                            unresolved_prev,
+                            max_workers=max_workers,
+                            dedupe_names=True,
+                            show_live_details=show_live_details,
+                            fast_local_first=False,
+                            deep_google_all=True,
+                        )
+
+                        st.success(f"✅ Retry complete! Resolved {retry_success}/{len(unresolved_prev)} unresolved rows")
+                        retry_df = pd.DataFrame(retry_rows)
+                        st.dataframe(retry_df, use_container_width=True)
+
+                        still_unresolved = [
+                            str(r.get("input_name", "")).strip()
+                            for r in retry_rows
+                            if not str(r.get("hsn_4digit") or "").strip()
+                        ]
+                        st.session_state["bulk_unresolved_names"] = still_unresolved
+                        st.info(f"Remaining unresolved after retry: {len(still_unresolved)}")
                 
                 # Start lookup button
                 if st.button("🚀 Start Auto-Lookup (Background)", use_container_width=True):
-                    
-                    # Create real-time progress display
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    results_container = st.container()
-                    
-                    # Store results
-                    all_results: list[dict | None] = [None] * len(product_names)
-                    success_count = 0
-                    processed = 0
-
-                    # Build unique-name map to reduce duplicate searches.
-                    key_to_indexes: dict[str, list[int]] = {}
-                    key_to_name: dict[str, str] = {}
-                    for idx, raw_name in enumerate(product_names):
-                        cleaned = str(raw_name).strip()
-                        canonical = _canonical_name_key(cleaned)
-                        key_base = canonical if canonical else cleaned.lower()
-                        key = key_base if dedupe_names else f"{idx}:{key_base}"
-                        key_to_name.setdefault(key, cleaned)
-                        key_to_indexes.setdefault(key, []).append(idx)
-                    
-                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                        future_map = {
-                            executor.submit(
-                                lookup_product_by_name,
-                                key_to_name[key],
-                                True,
-                                True,
-                                not fast_local_first and deep_google_all,
-                                fast_local_first,
-                            ): key
-                            for key in key_to_indexes
-                        }
-
-                        for future in as_completed(future_map):
-                            key = future_map[future]
-                            canonical_name = key_to_name[key]
-                            indexes = key_to_indexes[key]
-
-                            result = None
-                            error_text = None
-                            try:
-                                result = future.result()
-                            except Exception as exc:
-                                error_text = str(exc)[:60]
-
-                            for row_idx in indexes:
-                                original_name = str(product_names[row_idx]).strip()
-                                if result:
-                                    row = {
-                                        'input_name': original_name,
-                                        'matched_name': result.get('matched_name') or result.get('name') or original_name,
-                                        'category': result.get('category'),
-                                        'hsn_4digit': result.get('hsn_4digit'),
-                                        'hsn_8digit': result.get('hsn_8digit'),
-                                        'source_url': result.get('source_url'),
-                                        'match_type': result.get('match_type', 'unknown'),
-                                        'confidence': result.get('confidence'),
-                                        'is_new': result.get('is_new', False),
-                                    }
-                                    all_results[row_idx] = row
-                                    if row['hsn_4digit']:
-                                        success_count += 1
-                                else:
-                                    all_results[row_idx] = {
-                                        'input_name': original_name,
-                                        'matched_name': None,
-                                        'category': 'Error' if error_text else None,
-                                        'hsn_4digit': None,
-                                        'hsn_8digit': None,
-                                        'source_url': None,
-                                        'match_type': f'error: {error_text}' if error_text else 'not_found',
-                                        'confidence': None,
-                                        'is_new': False,
-                                    }
-                                processed += 1
-
-                            progress = processed / max(1, len(product_names))
-                            progress_bar.progress(progress)
-                            status_text.text(
-                                f"⏳ Processing: {processed}/{len(product_names)} | ✅ Saved: {success_count} | ⚡ Workers: {max_workers}"
-                            )
-
-                            if show_live_details:
-                                with results_container:
-                                    outcome = result.get('hsn_4digit') if result else 'N/A'
-                                    st.caption(f"{canonical_name} -> HSN {outcome}")
-                    
-                    # Completion
-                    progress_bar.progress(1.0)
-                    status_text.empty()
+                    rows, success_count = _run_bulk_lookup_batch(
+                        product_names,
+                        max_workers=max_workers,
+                        dedupe_names=dedupe_names,
+                        show_live_details=show_live_details,
+                        fast_local_first=fast_local_first,
+                        deep_google_all=deep_google_all,
+                    )
                     
                     st.success(f"✅ **Lookup Complete!** Saved {success_count}/{len(product_names)} products to database")
                     
@@ -356,8 +401,15 @@ def _bulk_upload_tab() -> None:
                     
                     # Results table
                     st.subheader("📋 Results Summary")
-                    results_df = pd.DataFrame([r for r in all_results if r is not None])
+                    results_df = pd.DataFrame(rows)
                     st.dataframe(results_df, use_container_width=True)
+
+                    unresolved_names = [
+                        str(r.get("input_name", "")).strip()
+                        for r in rows
+                        if not str(r.get("hsn_4digit") or "").strip()
+                    ]
+                    st.session_state["bulk_unresolved_names"] = unresolved_names
                     
                     # Download options
                     st.divider()
