@@ -1,7 +1,0 @@
-product_name,category,hsn4,hsn6,hsn_description,resolved_hsn8,score,status,reason
-cabdury diary mik,chapter_18,1806,180610,"COCOA POWDER, CONTAINING ADDED SUGAR OR OTHER SWEETENING MATTER",18061000,72,manual_review,Keyword hint from token 'chocolate'; Ambiguous candidates (small score gap)
-cd milk,chapter_18,1806,180610,"COCOA POWDER, CONTAINING ADDED SUGAR OR OTHER SWEETENING MATTER",18061000,72,manual_review,Keyword hint from token 'chocolate'; Ambiguous candidates (small score gap)
-cadbury,,,,,,0.0,manual_review,No candidate found
-c diary milk,chapter_18,1806,180610,"COCOA POWDER, CONTAINING ADDED SUGAR OR OTHER SWEETENING MATTER",18061000,72,manual_review,Keyword hint from token 'chocolate'; Ambiguous candidates (small score gap)
-DATHRI DHEEDHI SHAMPOO 250ML,chapter_33,3305,330510,CONTAINING SPIRIT,33051010,72,manual_review,Keyword hint from token 'shampoo'; Ambiguous candidates (small score gap)
-CAMLIN P.M INK BLACK RS 25,chapter_32,3215,321511,LITHOGRAPHIC INK AND JELLY,32151110,72,manual_review,Keyword hint from token 'ink'; Ambiguous candidates (small score gap)

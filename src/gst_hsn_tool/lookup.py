@@ -92,13 +92,6 @@ def _resolve_master_path() -> Optional[Path]:
     for path in MASTER_CANDIDATE_PATHS:
         if path.exists() and path.is_file():
             return path
-
-    # Fallback to latest training snapshot, if present.
-    snapshot_dir = Path("data") / "training" / "snapshots"
-    if snapshot_dir.exists() and snapshot_dir.is_dir():
-        snaps = sorted(snapshot_dir.glob("hsn_master_snapshot_*.csv"), reverse=True)
-        if snaps:
-            return snaps[0]
     return None
 
 

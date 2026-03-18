@@ -1,8 +1,0 @@
-# One query per line. Only Google-discovered URLs from these queries are used for AI learning.
-# Keep queries focused on GST/HSN to improve data quality.
-
-gst hsn code list india
-cbic hsn tariff schedule
-gst rate hsn code chapter wise
-india customs tariff hsn code
-hsn code pdf gst goods list
