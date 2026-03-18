@@ -6,8 +6,6 @@ Stores product names, categories, 4-digit HSN, 8-digit HSN, and source URLs.
 import sqlite3
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from datetime import datetime
-import json
 
 DB_DIR = Path(__file__).parent.parent.parent / "data" / "db"
 DB_PATH = DB_DIR / "gst_hsn.db"
@@ -41,6 +39,12 @@ def init_db():
     conn.close()
 
 
+def _get_connection() -> sqlite3.Connection:
+    """Return a connection after ensuring schema exists."""
+    init_db()
+    return sqlite3.connect(DB_PATH)
+
+
 def insert_product(
     name: str,
     category: Optional[str] = None,
@@ -52,7 +56,7 @@ def insert_product(
     Insert a product into the database.
     Returns True if successful, False if product already exists.
     """
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_connection()
     cursor = conn.cursor()
     
     try:
@@ -80,7 +84,7 @@ def update_product(
     """
     Update an existing product. Returns True if successful.
     """
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -104,7 +108,7 @@ def get_product(name: str) -> Optional[Dict[str, Any]]:
     """
     Retrieve a product by exact name match.
     """
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -132,7 +136,7 @@ def search_products(query: str, limit: int = 10) -> List[Dict[str, Any]]:
     """
     Search products by name (LIKE query).
     """
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -162,7 +166,7 @@ def get_all_products(limit: int = 1000) -> List[Dict[str, Any]]:
     """
     Retrieve all products from database.
     """
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_connection()
     cursor = conn.cursor()
     
     cursor.execute("""
@@ -192,7 +196,7 @@ def delete_product(name: str) -> bool:
     """
     Delete a product by name. Returns True if successful.
     """
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_connection()
     cursor = conn.cursor()
     
     cursor.execute("DELETE FROM products WHERE name = ?", (name.strip(),))
@@ -214,7 +218,7 @@ def get_total_count() -> int:
     """
     Get total number of products in database.
     """
-    conn = sqlite3.connect(DB_PATH)
+    conn = _get_connection()
     cursor = conn.cursor()
     
     cursor.execute("SELECT COUNT(*) FROM products")
