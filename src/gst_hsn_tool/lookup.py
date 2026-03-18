@@ -26,6 +26,7 @@ USER_AGENT = (
 )
 
 GOOGLE_SEARCH_URL = "https://www.google.com/search"
+DUCKDUCKGO_SEARCH_URL = "https://html.duckduckgo.com/html/"
 SEARCH_FETCH_WORKERS = 6
 SEARCH_URLS_PER_PRODUCT = 8
 
@@ -378,6 +379,16 @@ def _search_google_for_hsn(product_name: str, num_results: int = 5) -> Optional[
                 urls.append(link)
         if len(urls) >= num_results:
             break
+
+    # Secondary online source: DuckDuckGo fallback discovery.
+    if len(urls) < num_results:
+        for query in query_candidates:
+            ddg_links = list(_get_duckduckgo_search_urls_cached(query, num_results))
+            for link in ddg_links:
+                if link not in urls:
+                    urls.append(link)
+            if len(urls) >= num_results:
+                break
     
     if not urls:
         # No URLs found, use fallback
@@ -535,6 +546,29 @@ def _get_google_search_urls_cached(query: str, num_results: int = 5) -> tuple[st
     return tuple(_get_google_search_urls(query, num_results))
 
 
+def _get_duckduckgo_search_urls(query: str, num_results: int = 5) -> list:
+    params = {
+        "q": query,
+        "kl": "in-en",
+    }
+    url = f"{DUCKDUCKGO_SEARCH_URL}?{urllib.parse.urlencode(params)}"
+
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            html_text = resp.read().decode("utf-8", errors="ignore")
+    except Exception:
+        return []
+
+    urls = _extract_duckduckgo_result_links(html_text)
+    return urls[:num_results]
+
+
+@lru_cache(maxsize=2048)
+def _get_duckduckgo_search_urls_cached(query: str, num_results: int = 5) -> tuple[str, ...]:
+    return tuple(_get_duckduckgo_search_urls(query, num_results))
+
+
 def _extract_urls_from_google_html(html_text: str) -> list:
     """
     Extract result URLs from Google search result HTML.
@@ -571,6 +605,33 @@ def _extract_urls_from_google_html(html_text: str) -> list:
             unique_urls.append(url)
     
     return unique_urls
+
+
+def _extract_duckduckgo_result_links(html_text: str) -> list:
+    links = []
+    seen = set()
+
+    # DuckDuckGo redirect links with uddg payload.
+    for match in re.findall(r'href=["\']https?://duckduckgo\.com/l/\?[^"\']*uddg=([^"\'&]+)', html_text, flags=re.IGNORECASE):
+        try:
+            decoded = urllib.parse.unquote(match)
+            if decoded.startswith(("http://", "https://")) and decoded not in seen:
+                seen.add(decoded)
+                links.append(decoded)
+        except Exception:
+            continue
+
+    # Direct result links in result__a anchors.
+    for match in re.findall(r'class=["\']result__a["\'][^>]*href=["\']([^"\']+)["\']', html_text, flags=re.IGNORECASE):
+        try:
+            decoded = html.unescape(match)
+            if decoded.startswith(("http://", "https://")) and "duckduckgo.com" not in decoded and decoded not in seen:
+                seen.add(decoded)
+                links.append(decoded)
+        except Exception:
+            continue
+
+    return links
 
 
 def _fetch_url(url: str, timeout: int = 10) -> Optional[str]:
