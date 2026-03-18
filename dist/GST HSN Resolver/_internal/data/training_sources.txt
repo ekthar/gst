@@ -1,0 +1,5 @@
+# Optional extra seed URLs for Training Mode web collection.
+# One URL per line. Keep only trusted sources.
+https://services.gst.gov.in/services/searchhsnsac
+https://tutorial.gst.gov.in/downloads/HSN_SAC.xlsx
+https://cleartax.in/s/gst-hsn-lookup

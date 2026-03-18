@@ -1,0 +1,22 @@
+category,name,url,mode,status,notes
+official,Central Board of Indirect Taxes and Customs,https://cbic-gst.gov.in/gst-goods-services-rates.html,auto_web,attempted,Public page crawl allowed best-effort
+official,GST Portal,https://services.gst.gov.in/services/searchhsnsac,auto_web,attempted,Primary source for HSN/SAC search
+official,Directorate General of Foreign Trade,https://www.dgft.gov.in/CP/,auto_web,attempted,Public notifications and policy content
+official,World Customs Organization,https://www.wcoomd.org/,auto_web,attempted,Public classification references
+official,Ministry of Commerce and Industry,https://commerce.gov.in/,auto_web,attempted,Public policy pages
+trade,Zauba,https://www.zauba.com/,manual_or_api,restricted,Site controls may block automation
+trade,Export Genius,https://www.exportgenius.in/,manual_or_api,restricted,Commercial platform; likely restricted crawling
+trade,Seair Exim Solutions,https://www.seair.co.in/,manual_or_api,restricted,Commercial platform; likely restricted crawling
+trade,Volza,https://www.volza.com/,manual_or_api,restricted,Commercial platform; likely restricted crawling
+trade,TradeImeX,https://www.tradeimex.in/,manual_or_api,restricted,Commercial platform; likely restricted crawling
+aggregator,ClearTax,https://cleartax.in/s/gst-hsn-lookup,auto_web,attempted,Public educational page
+aggregator,TaxGuru,https://taxguru.in/goods-and-service-tax/,auto_web,attempted,Public article pages
+aggregator,GST India News,https://www.gstindianews.info/,auto_web,attempted,Public article pages
+aggregator,IndiaFilings,https://www.indiafilings.com/learn/hsn-code/,auto_web,attempted,Public educational page
+aggregator,Vakilsearch,https://vakilsearch.com/blog/hsn-code-list-gst/,auto_web,attempted,Public educational page
+dataset,GitHub,https://github.com/search?q=gst+hsn+dataset,type=repositories,restricted,auto_web
+dataset,Kaggle,https://www.kaggle.com/search?q=gst%20hsn%20dataset,manual_or_api,restricted,Auth/ToS may restrict automation
+dataset,Data.gov.in,https://www.data.gov.in/,auto_web,attempted,Public datasets portal
+enrichment,Amazon,https://www.amazon.in/,manual_or_api,restricted,Anti-bot and terms restrictions
+enrichment,Flipkart,https://www.flipkart.com/,manual_or_api,restricted,Anti-bot and terms restrictions
+custom,Custom Source,https://tutorial.gst.gov.in/downloads/HSN_SAC.xlsx,auto_web,attempted,Added from training_sources.txt

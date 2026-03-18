@@ -1,0 +1,7 @@
+product_name,category,hsn4,hsn6,hsn_description,suggested_category,suggested_hsn4,suggested_hsn6,suggested_hsn_description,resolved_hsn8,score,status,reason
+cabdury diary mik,,,,,chapter_18,1806,180690,CHOCOLATE AND CHOCOLATE PRODUCTS,18069010,73.7,manual_review,Keyword hint from token 'chocolate' (46.8 similarity); Ambiguous candidates (small score gap)
+cd milk,chapter_18,1806,180690,CHOCOLATE AND CHOCOLATE PRODUCTS,chapter_18,1806,180690,CHOCOLATE AND CHOCOLATE PRODUCTS,18069010,78.67,supervisor_review,Keyword hint from token 'chocolate' (66.7 similarity)
+cadbury,,,,,,,,,,0.0,manual_review,No candidate found
+c diary milk,chapter_18,1806,180690,CHOCOLATE AND CHOCOLATE PRODUCTS,chapter_18,1806,180690,CHOCOLATE AND CHOCOLATE PRODUCTS,18069010,78.67,supervisor_review,Keyword hint from token 'chocolate' (66.7 similarity)
+DATHRI DHEEDHI SHAMPOO 250ML,,,,,chapter_33,3305,330530,HAIR LACQUERS,33053000,71.09,manual_review,Keyword hint from token 'shampoo' (36.4 similarity); Ambiguous candidates (small score gap)
+CAMLIN P.M INK BLACK RS 25,,,,,chapter_32,3215,321590,BALL PEN INK,32159020,74,manual_review,Keyword hint from token 'ink' (52.6 similarity); Ambiguous candidates (small score gap)
