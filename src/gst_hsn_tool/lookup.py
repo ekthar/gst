@@ -75,6 +75,17 @@ def _token_set(value: str) -> set[str]:
     return {p for p in text.split() if len(p) > 2 and p not in NOISE_TOKENS and not p.isdigit()}
 
 
+def _token_variants(tokens: set[str]) -> set[str]:
+    """Expand tokens with simple singular/plural variants for better master matching."""
+    out = set(tokens)
+    for t in list(tokens):
+        if t.endswith("s") and len(t) > 4:
+            out.add(t[:-1])
+        else:
+            out.add(f"{t}s")
+    return out
+
+
 def _resolve_master_path() -> Optional[Path]:
     # Preferred static master path.
     for path in MASTER_CANDIDATE_PATHS:
@@ -95,9 +106,85 @@ def _load_master_rows_cached(path_str: str, mtime: float) -> list[dict]:
     del mtime  # part of cache key only
     path = Path(path_str)
     try:
-        return load_hsn_master(path)
+        rows = load_hsn_master(path)
+        for row in rows:
+            desc_tokens = _token_set(row.get("description", ""))
+            alias_tokens: set[str] = set()
+            aliases_norm = row.get("aliases_norm", [])
+            if isinstance(aliases_norm, list):
+                for item in aliases_norm:
+                    alias_tokens |= _token_set(str(item))
+            row["_lookup_tokens"] = _token_variants(desc_tokens | alias_tokens)
+        return rows
     except Exception:
         return []
+
+
+@lru_cache(maxsize=4)
+def _build_master_inverted_index(path_str: str, mtime: float) -> dict[str, list[int]]:
+    rows = _load_master_rows_cached(path_str, mtime)
+    index: dict[str, list[int]] = {}
+    for i, row in enumerate(rows):
+        for tok in row.get("_lookup_tokens", set()):
+            index.setdefault(tok, []).append(i)
+    return index
+
+
+def _master_text_fallback(product_name: str) -> Optional[Dict[str, Any]]:
+    """Try mapping product text directly to GST master descriptions when Google misses."""
+    master_path = _resolve_master_path()
+    if not master_path:
+        return None
+
+    try:
+        stat = master_path.stat()
+    except Exception:
+        return None
+
+    rows = _load_master_rows_cached(str(master_path), stat.st_mtime)
+    if not rows:
+        return None
+
+    query_tokens = _token_variants(_token_set(product_name))
+    if not query_tokens:
+        return None
+
+    index = _build_master_inverted_index(str(master_path), stat.st_mtime)
+    candidate_idxs: set[int] = set()
+    for tok in query_tokens:
+        for idx in index.get(tok, []):
+            candidate_idxs.add(idx)
+
+    if not candidate_idxs:
+        return None
+
+    best_row = None
+    best_score = 0.0
+    for idx in candidate_idxs:
+        row = rows[idx]
+        rt = row.get("_lookup_tokens", set())
+        if not rt:
+            continue
+        overlap = len(query_tokens & rt)
+        score = overlap / max(1, len(query_tokens))
+        if score > best_score:
+            best_score = score
+            best_row = row
+
+    # Require minimum confidence to avoid noisy guesses.
+    if not best_row or best_score < 0.25:
+        return None
+
+    hsn8 = normalize_hsn_digits(best_row.get("hsn8", ""))
+    if len(hsn8) != 8:
+        return None
+
+    return {
+        "category": best_row.get("category") or "GST Master",
+        "hsn_4digit": hsn8[:4],
+        "hsn_8digit": hsn8,
+        "source_url": None,
+    }
 
 
 def _extract_hsn6_from_text(text: str) -> str:
@@ -193,6 +280,7 @@ def lookup_product_by_name(
     auto_store: bool = True,
     search_if_not_found: bool = True,
     force_google_search: bool = False,
+    fast_local_first: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """
     Lookup a product by name in database.
@@ -204,6 +292,28 @@ def lookup_product_by_name(
     """
     
     cleaned_name = product_name.strip()
+
+    if fast_local_first:
+        local_result = _fallback_hsn_guess(cleaned_name)
+        if not local_result:
+            local_result = _master_text_fallback(cleaned_name)
+        if local_result:
+            local_result = _enrich_result_with_master(cleaned_name, local_result)
+            if auto_store and local_result.get("hsn_4digit"):
+                db.insert_product(
+                    name=cleaned_name,
+                    category=local_result.get("category"),
+                    hsn_4digit=local_result.get("hsn_4digit"),
+                    hsn_8digit=local_result.get("hsn_8digit"),
+                    source_url=local_result.get("source_url"),
+                )
+            local_result["input_name"] = cleaned_name
+            local_result["matched_name"] = cleaned_name
+            local_result["name"] = cleaned_name
+            local_result["searched_on_google"] = False
+            local_result["is_new"] = True
+            local_result["match_type"] = "fast_local"
+            return local_result
 
     # First, check for similar products in DB
     similar = None if force_google_search else similarity.find_similar_in_db(cleaned_name)
@@ -270,7 +380,10 @@ def _search_google_for_hsn(product_name: str, num_results: int = 5) -> Optional[
     
     if not urls:
         # No URLs found, use fallback
-        return _fallback_hsn_guess(product_name)
+        fb = _fallback_hsn_guess(product_name)
+        if fb:
+            return fb
+        return _master_text_fallback(product_name)
     
     # Fetch and extract candidates concurrently for speed.
     best: Optional[Dict[str, Any]] = None
@@ -303,7 +416,10 @@ def _search_google_for_hsn(product_name: str, num_results: int = 5) -> Optional[
         return best
     
     # If nothing found, use fallback
-    return _fallback_hsn_guess(product_name)
+    fb = _fallback_hsn_guess(product_name)
+    if fb:
+        return fb
+    return _master_text_fallback(product_name)
 
 
 def _fetch_extract_candidate(url: str, product_name: str) -> Optional[Dict[str, Any]]:
@@ -330,62 +446,58 @@ def _fallback_hsn_guess(product_name: str) -> Optional[Dict[str, Any]]:
     """
     Fallback method to guess HSN category based on product name keywords.
     """
-    keywords = product_name.lower().split()
-    
-    category_map = {
-        # Stationery / office supplies
-        ('ink',): ('Stationery', '3215'),
-        ('scale', 'ruler'): ('Stationery', '9017'),
-        ('sticker',): ('Printed Material', '4911'),
-        ('tag',): ('Paper Articles', '4821'),
-        ('chalk',): ('Stationery', '9609'),
-        ('envelop', 'envelope'): ('Paper Articles', '4817'),
+    tokens = _token_variants(_token_set(product_name))
 
-        # Household plastic/cleaning
-        ('dust', 'dustpan'): ('Household Articles', '3924'),
-        ('tray',): ('Household Articles', '3924'),
-        ('cover',): ('Household Articles', '3924'),
-        ('clean', 'cleaner', 'cleaning', 'scrub', 'scrubber'): ('Household Articles', '3924'),
-        ('pazhakazthi', 'kazthi', 'broom', 'wiper', 'sweeper'): ('Household Articles', '9603'),
-        ('mat',): ('Floor Coverings', '5705'),
-        ('soap', 'box'): ('Household Articles', '3924'),
+    # Scored fallback rules (category, hsn4, keywords)
+    rules = [
+        ("Food & Beverages", "1905", {"biscuit", "cookie", "cookies", "cake", "cakes", "rusk", "wafer", "wafers", "muffin", "muffins", "cracker", "crackers", "plum", "milano", "digestive", "hobnobs", "marie"}),
+        ("Food & Beverages", "1704", {"choco", "chocolate", "candy", "candies", "eclair", "eclairs", "toffee", "mint", "mints", "bonbon", "bar", "snickers", "solano"}),
+        ("Food & Beverages", "2106", {"murukku", "sev", "pakkavada", "mixture", "chips", "popcorn", "frymes", "kuzhal", "chakli", "jeera"}),
+        ("Food & Beverages", "2202", {"tea", "drink", "juice", "squash", "beverage", "7up", "soup", "knorr"}),
+        ("Agricultural Products", "1006", {"rice", "undai", "ariurundai"}),
+        ("Agricultural Products", "1701", {"sugar"}),
+        ("Animal Products", "0407", {"egg", "eggs", "poultry", "hen"}),
+        ("Agricultural Products", "0801", {"coconut"}),
+        ("Stationery", "3215", {"ink"}),
+        ("Stationery", "9017", {"scale", "ruler"}),
+        ("Printed Material", "4911", {"sticker", "chart"}),
+        ("Paper Articles", "4821", {"tag"}),
+        ("Paper Articles", "4817", {"envelop", "envelope"}),
+        ("Stationery", "9609", {"chalk"}),
+        ("Household Articles", "3924", {"dust", "dustpan", "tray", "cover", "soap", "box", "clean", "scrub"}),
+        ("Household Articles", "9603", {"broom", "wiper", "sweeper", "pazhakazthi", "kazthi"}),
+        ("Floor Coverings", "5705", {"mat"}),
+        ("Chemical Products", "3506", {"mseal", "m-seal", "epoxy", "adhesive", "compound"}),
+        ("Sports Goods", "9504", {"carrom", "striker"}),
+        ("Accessories", "9615", {"hair", "band"}),
+        ("Accessories", "7117", {"ring", "stud", "pearl", "button", "buttons"}),
+        ("Electronics", "8471", {"laptop", "computer", "phone", "mobile", "iphone", "samsung"}),
+        ("Electronics", "8528", {"tv", "monitor", "display", "screen"}),
+        ("Textiles", "5208", {"cotton", "fabric", "cloth", "textile", "shirt", "pant", "dress"}),
+        ("Cosmetics", "3304", {"shampoo", "cosmetic", "beauty", "lotion", "cream"}),
+    ]
 
-        # Food & beverages
-        ('sunfeast', 'bingo', 'biscuit', 'cookie', 'cracker'): ('Food & Beverages', '1905'),
-        ('cadbury', 'chocolate', 'candy', 'toffee', 'orbit'): ('Food & Beverages', '1704'),
-        ('tea', 'coffee', 'beverage', 'drink', 'juice', '7up', 'lemon'): ('Food & Beverages', '2202'),
-        ('rice',): ('Agricultural Products', '1006'),
-        ('sugar',): ('Agricultural Products', '1701'),
-        ('egg', 'eggs', 'poultry', 'hen'): ('Animal Products', '0407'),
-        ('coconut',): ('Agricultural Products', '0801'),
+    best = None
+    best_score = 0
+    for category, hsn4, kws in rules:
+        score = len(tokens & kws)
+        if score > best_score:
+            best = (category, hsn4)
+            best_score = score
 
-        # Hardware / misc
-        ('m-seal', 'mseal', 'epoxy', 'compound', 'adhesive'): ('Chemical Products', '3506'),
-        ('carrom', 'striker'): ('Sports Goods', '9504'),
-        ('hair', 'band'): ('Accessories', '9615'),
-        ('ring', 'stud', 'pearl', 'button', 'buttons'): ('Accessories', '7117'),
+    if best:
+        category, hsn4 = best
+        return {
+            'category': category,
+            'hsn_4digit': hsn4,
+            'hsn_8digit': None,
+            'source_url': None
+        }
 
-        # Electronics
-        ('laptop', 'computer', 'phone', 'mobile', 'iphone', 'samsung'): ('Electronics', '8471'),
-        ('tv', 'monitor', 'display', 'screen'): ('Electronics', '8528'),
-
-        # Textiles
-        ('cotton', 'fabric', 'cloth', 'textile', 'shirt', 'pant', 'dress'): ('Textiles', '5208'),
-
-        # Cosmetics / personal care
-        ('shampoo', 'cosmetic', 'beauty', 'lotion', 'cream'): ('Cosmetics', '3304'),
-    }
-    
-    # Try to match keywords
-    for keywords_tuple, (category, hsn_4) in category_map.items():
-        for keyword in keywords:
-            if keyword in keywords_tuple:
-                return {
-                    'category': category,
-                    'hsn_4digit': hsn_4,
-                    'hsn_8digit': None,
-                    'source_url': None
-                }
+    # Last fallback: try direct semantic match against GST master descriptions.
+    master_guess = _master_text_fallback(product_name)
+    if master_guess:
+        return master_guess
     
     # Unknown products should remain not_found instead of polluting DB with 9999.
     return None
@@ -407,7 +519,7 @@ def _get_google_search_urls(query: str, num_results: int = 5) -> list:
     
     try:
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=6) as resp:
             html_text = resp.read().decode('utf-8', errors='ignore')
     except Exception as e:
         return []

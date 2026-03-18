@@ -8,6 +8,7 @@ from __future__ import annotations
 import io
 import csv
 import sys
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +32,17 @@ from gst_hsn_tool.config import (
     TRAINING_GOOGLE_QUERIES_FILE,
 )
 from gst_hsn_tool.pipeline import run_pipeline
+
+
+def _canonical_name_key(name: str) -> str:
+    """Normalize product names for better dedupe during bulk runs."""
+    text = str(name or "").lower().strip()
+    text = re.sub(r"\b(rs\.?\s*\d+(?:\.\d+)?)\b", " ", text)
+    text = re.sub(r"\b\d+(?:g|gm|kg|ml|l|pcs?)\b", " ", text)
+    text = re.sub(r"\b(117|177|217)\b", " ", text)
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
 def _read_text(path: str) -> str:
@@ -229,6 +241,12 @@ def _bulk_upload_tab() -> None:
                     dedupe_names = st.checkbox("Deduplicate exact names", value=True)
                 with speed_col3:
                     show_live_details = st.checkbox("Show live details (slower)", value=False)
+
+                strategy_col1, strategy_col2 = st.columns(2)
+                with strategy_col1:
+                    fast_local_first = st.checkbox("Hybrid fast mode (local/master first)", value=True)
+                with strategy_col2:
+                    deep_google_all = st.checkbox("Deep Google for every item (slower)", value=False)
                 
                 # Start lookup button
                 if st.button("🚀 Start Auto-Lookup (Background)", use_container_width=True):
@@ -248,7 +266,9 @@ def _bulk_upload_tab() -> None:
                     key_to_name: dict[str, str] = {}
                     for idx, raw_name in enumerate(product_names):
                         cleaned = str(raw_name).strip()
-                        key = cleaned.lower() if dedupe_names else f"{idx}:{cleaned.lower()}"
+                        canonical = _canonical_name_key(cleaned)
+                        key_base = canonical if canonical else cleaned.lower()
+                        key = key_base if dedupe_names else f"{idx}:{key_base}"
                         key_to_name.setdefault(key, cleaned)
                         key_to_indexes.setdefault(key, []).append(idx)
                     
@@ -259,7 +279,8 @@ def _bulk_upload_tab() -> None:
                                 key_to_name[key],
                                 True,
                                 True,
-                                True,
+                                not fast_local_first and deep_google_all,
+                                fast_local_first,
                             ): key
                             for key in key_to_indexes
                         }
