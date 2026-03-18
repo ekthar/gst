@@ -1,8 +1,7 @@
-"""
-Similarity matching for product names using fuzzy matching and keyword matching.
-"""
+"""Similarity matching for product names using fuzzy matching and keyword matching."""
 
-from typing import List, Dict, Optional
+from functools import lru_cache
+from typing import List, Dict, Optional, Tuple
 from fuzzywuzzy import fuzz
 from . import db
 
@@ -24,6 +23,11 @@ STOP_TOKENS = {
     "cm",
     "mm",
     "nos",
+    "kerala",
+    "india",
+    "indian",
+    "special",
+    "spl",
 }
 
 
@@ -41,17 +45,44 @@ def _overlap_score(query: str, candidate: str) -> float:
     return inter / max(1, len(q))
 
 
+def _minimum_overlap(query_token_count: int) -> int:
+    if query_token_count <= 1:
+        return 1
+    if query_token_count == 2:
+        return 2
+    return 2
+
+
+def _overlap_count(query: str, candidate: str) -> int:
+    q = _tokens(query)
+    c = _tokens(candidate)
+    return len(q & c)
+
+
+@lru_cache(maxsize=8)
+def _all_products_cached(total_count: int) -> tuple[tuple[str, Dict], ...]:
+    del total_count  # only used as cache key invalidator
+    products = db.get_all_products(limit=20000)
+    return tuple((p["name"], p) for p in products if p.get("name"))
+
+
+def _get_all_products() -> tuple[tuple[str, Dict], ...]:
+    return _all_products_cached(db.get_total_count())
+
+
 def fuzzy_match(query: str, candidates: List[str], threshold: int = 80) -> List[tuple]:
     """
     Perform fuzzy matching between query and candidates.
     Returns list of (name, score) tuples sorted by score (descending).
     """
     results = []
+    q_tokens = _tokens(query)
+    min_overlap = _minimum_overlap(len(q_tokens))
     for candidate in candidates:
         score = fuzz.token_set_ratio(query.lower(), candidate.lower())
-        overlap = _overlap_score(query, candidate)
+        overlap = _overlap_count(query, candidate)
         # Guard against false positives caused by common commercial tokens.
-        if score >= threshold and overlap >= 0.5:
+        if score >= threshold and overlap >= min_overlap:
             results.append((candidate, score))
     
     return sorted(results, key=lambda x: x[1], reverse=True)
@@ -63,13 +94,12 @@ def keyword_match(query: str, candidates: List[str]) -> List[str]:
     Returns list of candidate names that share keywords with query.
     """
     query_words = _tokens(query)
+    min_overlap = _minimum_overlap(len(query_words))
     results = []
     
     for candidate in candidates:
         candidate_words = _tokens(candidate)
         overlap = query_words & candidate_words
-        # Require stronger overlap to avoid mapping many rows to one wrong product.
-        min_overlap = 1 if len(query_words) <= 2 else 2
         if len(overlap) >= min_overlap:
             results.append(candidate)
     
@@ -91,16 +121,17 @@ def find_similar_in_db(query: str, threshold: int = 80) -> Optional[Dict]:
     if product:
         return {**product, 'match_type': 'exact', 'confidence': 100}
     
-    # Get all products for fuzzy matching
-    all_products = db.get_all_products(limit=10000)
-    all_names = [p['name'] for p in all_products]
+    # Get all products for fuzzy matching from cache (fast path for bulk lookups).
+    products = _get_all_products()
+    all_names = [name for name, _ in products]
+    product_by_name = {name: row for name, row in products}
     
     # Try fuzzy match
     fuzzy_results = fuzzy_match(query, all_names, threshold)
     if fuzzy_results:
         best_match_name = fuzzy_results[0][0]
         best_match_score = fuzzy_results[0][1]
-        product = db.get_product(best_match_name)
+        product = product_by_name.get(best_match_name)
         if product:
             return {**product, 'match_type': 'fuzzy', 'confidence': best_match_score}
     
@@ -113,7 +144,7 @@ def find_similar_in_db(query: str, threshold: int = 80) -> Optional[Dict]:
             key=lambda n: (_overlap_score(query, n), fuzz.token_set_ratio(query.lower(), n.lower())),
             reverse=True,
         )
-        product = db.get_product(ranked[0])
+        product = product_by_name.get(ranked[0])
         if product:
             return {**product, 'match_type': 'keyword', 'confidence': 50}
     

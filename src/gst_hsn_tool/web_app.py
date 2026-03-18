@@ -301,44 +301,50 @@ def _bulk_upload_tab() -> None:
 
     retry_col1, retry_col2 = st.columns(2)
     with retry_col1:
-        if st.button("Retry unresolved with deep web search", disabled=not unresolved_prev, use_container_width=True):
-            retry_rows, retry_success = _run_bulk_lookup_batch(
-                unresolved_prev,
-                max_workers=max_workers,
-                dedupe_names=True,
-                show_live_details=show_live_details,
-                fast_local_first=False,
-                deep_google_all=True,
-                search_if_not_found=True,
-                similar_threshold=80,
-            )
-            st.success(f"Resolved {retry_success}/{len(unresolved_prev)}")
-            st.dataframe(pd.DataFrame(retry_rows), use_container_width=True)
-            st.session_state["bulk_unresolved_names"] = [
-                str(r.get("input_name", "")).strip()
-                for r in retry_rows
-                if not str(r.get("hsn_4digit") or "").strip()
-            ]
+        if st.button("Retry unresolved with deep web search", use_container_width=True):
+            if not unresolved_prev:
+                st.info("No unresolved rows stored yet. Run a bulk lookup first.")
+            else:
+                retry_rows, retry_success = _run_bulk_lookup_batch(
+                    unresolved_prev,
+                    max_workers=max_workers,
+                    dedupe_names=True,
+                    show_live_details=show_live_details,
+                    fast_local_first=False,
+                    deep_google_all=True,
+                    search_if_not_found=True,
+                    similar_threshold=80,
+                )
+                st.success(f"Resolved {retry_success}/{len(unresolved_prev)}")
+                st.dataframe(pd.DataFrame(retry_rows), use_container_width=True)
+                st.session_state["bulk_unresolved_names"] = [
+                    str(r.get("input_name", "")).strip()
+                    for r in retry_rows
+                    if not str(r.get("hsn_4digit") or "").strip()
+                ]
 
     with retry_col2:
-        if st.button("Retry unresolved with relaxed local mode", disabled=not unresolved_prev, use_container_width=True):
-            retry_rows, retry_success = _run_bulk_lookup_batch(
-                unresolved_prev,
-                max_workers=max_workers,
-                dedupe_names=True,
-                show_live_details=show_live_details,
-                fast_local_first=True,
-                deep_google_all=False,
-                search_if_not_found=False,
-                similar_threshold=65,
-            )
-            st.success(f"Resolved {retry_success}/{len(unresolved_prev)}")
-            st.dataframe(pd.DataFrame(retry_rows), use_container_width=True)
-            st.session_state["bulk_unresolved_names"] = [
-                str(r.get("input_name", "")).strip()
-                for r in retry_rows
-                if not str(r.get("hsn_4digit") or "").strip()
-            ]
+        if st.button("Retry unresolved with relaxed local mode", use_container_width=True):
+            if not unresolved_prev:
+                st.info("No unresolved rows stored yet. Run a bulk lookup first.")
+            else:
+                retry_rows, retry_success = _run_bulk_lookup_batch(
+                    unresolved_prev,
+                    max_workers=max_workers,
+                    dedupe_names=True,
+                    show_live_details=show_live_details,
+                    fast_local_first=True,
+                    deep_google_all=False,
+                    search_if_not_found=False,
+                    similar_threshold=65,
+                )
+                st.success(f"Resolved {retry_success}/{len(unresolved_prev)}")
+                st.dataframe(pd.DataFrame(retry_rows), use_container_width=True)
+                st.session_state["bulk_unresolved_names"] = [
+                    str(r.get("input_name", "")).strip()
+                    for r in retry_rows
+                    if not str(r.get("hsn_4digit") or "").strip()
+                ]
 
     if st.button("Start Bulk Lookup", type="primary", use_container_width=True):
         rows, success_count = _run_bulk_lookup_batch(

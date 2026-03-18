@@ -58,3 +58,21 @@ Upload `.xlsx` or `.csv` with product names in the first column.
 ```bash
 pip install -r requirements.txt
 ```
+
+## Build Windows EXE (For Distribution)
+
+Create a packaged Windows app with all runtime dependencies:
+
+```powershell
+./build_exe.ps1 -Clean
+```
+
+Output:
+
+- `dist/GST_HSN_Resolver/GST_HSN_Resolver.exe`
+
+Notes:
+
+- Distribute the full `dist/GST_HSN_Resolver` folder, not only the `.exe` file.
+- Keep `data/hsn_master_from_gst.csv` inside the packaged `data` folder for best 8-digit enrichment.
+- `python-Levenshtein` is optional for speed and is intentionally skipped in EXE builds on environments where it cannot be compiled.

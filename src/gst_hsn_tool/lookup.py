@@ -154,6 +154,7 @@ def _master_text_fallback(product_name: str) -> Optional[Dict[str, Any]]:
 
     best_row = None
     best_score = 0.0
+    best_overlap = 0
     for idx in candidate_idxs:
         row = rows[idx]
         rt = row.get("_lookup_tokens", set())
@@ -163,10 +164,11 @@ def _master_text_fallback(product_name: str) -> Optional[Dict[str, Any]]:
         score = overlap / max(1, len(query_tokens))
         if score > best_score:
             best_score = score
+            best_overlap = overlap
             best_row = row
 
     # Require minimum confidence to avoid noisy guesses.
-    if not best_row or best_score < 0.25:
+    if not best_row or best_score < 0.6 or best_overlap < 2:
         return None
 
     hsn8 = normalize_hsn_digits(best_row.get("hsn8", ""))
@@ -476,9 +478,23 @@ def _fallback_hsn_guess(product_name: str) -> Optional[Dict[str, Any]]:
     Fallback method to guess HSN category based on product name keywords.
     """
     tokens = _token_variants(_token_set(product_name))
+    normalized = normalize_text(product_name)
+
+    if "front line" in normalized:
+        return {
+            'category': 'Printed Material',
+            'hsn_4digit': '4902',
+            'hsn_8digit': None,
+            'source_url': None
+        }
 
     # Scored fallback rules (category, hsn4, keywords)
     rules = [
+        ("Printed Material", "4910", {"calendar", "calender", "calander", "kalendar", "kalander"}),
+        ("Printed Material", "4902", {"magazine", "weekly", "monthly", "digest", "varika", "masika", "supplementary", "supplement", "journal"}),
+        ("Printed Material", "4901", {"panchangam", "almanac", "panchagam", "mathrubhoomi", "mathrubhumi", "manorama", "kaumudi", "kaumudhi", "mangalam", "frontline", "yathra", "balarama", "balabhoomi", "grihalekshmi", "gruhalakshmi", "bhasha", "poshini", "thozhilveethi", "thozhilvartha", "muhurtham", "muhoortham", "minnaminni", "snehitha", "vanitha", "veedu", "chithrakadha", "karshaka", "sree"}),
+        ("Hardware", "8301", {"padlock", "lock"}),
+        ("Household Articles", "7323", {"idly", "iddli", "idli", "iddlipana", "idlipana", "panai", "pan", "chatti", "cheenachatti", "kudam", "puttu"}),
         ("Food & Beverages", "1905", {"biscuit", "cookie", "cookies", "cake", "cakes", "rusk", "wafer", "wafers", "muffin", "muffins", "cracker", "crackers", "plum", "milano", "digestive", "hobnobs", "marie"}),
         ("Food & Beverages", "1704", {"choco", "chocolate", "candy", "candies", "eclair", "eclairs", "toffee", "mint", "mints", "bonbon", "bar", "snickers", "solano"}),
         ("Food & Beverages", "2106", {"murukku", "sev", "pakkavada", "mixture", "chips", "popcorn", "frymes", "kuzhal", "chakli", "jeera"}),
@@ -705,7 +721,7 @@ def bulk_lookup_products(
                 'match_type': 'not_found'
             })
         
-        # Small delay between lookups to avoid throttling
-        time.sleep(0.3)
+        # Keep local-first bulk lookup responsive.
+        time.sleep(0.01)
     
     return results
