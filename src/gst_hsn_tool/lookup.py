@@ -8,12 +8,15 @@ import re
 import time
 import urllib.parse
 import urllib.request
+from functools import lru_cache
 from typing import Optional, Dict, Any
 from pathlib import Path
 
 from .hsn_extractor import extract_hsn_from_google_result, validate_hsn_code
 from . import db
 from . import similarity
+from .loader import load_hsn_master
+from .utils import normalize_hsn_digits, normalize_text
 
 
 USER_AGENT = (
@@ -41,6 +44,11 @@ NOISE_TOKENS = {
 }
 
 
+MASTER_CANDIDATE_PATHS = [
+    Path("data") / "hsn_master_from_gst.csv",
+]
+
+
 def _normalize_product_query(product_name: str) -> str:
     """Clean noisy commercial tokens to improve Google query relevance."""
     raw = product_name.lower().replace("/", " ").replace("-", " ")
@@ -55,6 +63,126 @@ def _normalize_product_query(product_name: str) -> str:
             continue
         cleaned.append(part)
     return " ".join(cleaned).strip() or product_name.strip()
+
+
+def _token_set(value: str) -> set[str]:
+    text = normalize_text(value)
+    if not text:
+        return set()
+    return {p for p in text.split() if len(p) > 2 and p not in NOISE_TOKENS and not p.isdigit()}
+
+
+def _resolve_master_path() -> Optional[Path]:
+    # Preferred static master path.
+    for path in MASTER_CANDIDATE_PATHS:
+        if path.exists() and path.is_file():
+            return path
+
+    # Fallback to latest training snapshot, if present.
+    snapshot_dir = Path("data") / "training" / "snapshots"
+    if snapshot_dir.exists() and snapshot_dir.is_dir():
+        snaps = sorted(snapshot_dir.glob("hsn_master_snapshot_*.csv"), reverse=True)
+        if snaps:
+            return snaps[0]
+    return None
+
+
+@lru_cache(maxsize=4)
+def _load_master_rows_cached(path_str: str, mtime: float) -> list[dict]:
+    del mtime  # part of cache key only
+    path = Path(path_str)
+    try:
+        return load_hsn_master(path)
+    except Exception:
+        return []
+
+
+def _extract_hsn6_from_text(text: str) -> str:
+    # Prefer explicit HSN-like context.
+    lower = text.lower()
+    for pattern in [r'hsn\s*(?:code)?\s*[:\-]?\s*(\d{6})\b', r'\b(\d{6})\s*(?:hsn|tariff)\b']:
+        match = re.search(pattern, lower)
+        if match:
+            return normalize_hsn_digits(match.group(1))
+    return ""
+
+
+def _best_hsn8_from_master(product_name: str, hsn4: str, hsn6: str = "") -> str:
+    master_path = _resolve_master_path()
+    if not master_path:
+        return ""
+
+    try:
+        stat = master_path.stat()
+    except Exception:
+        return ""
+
+    rows = _load_master_rows_cached(str(master_path), stat.st_mtime)
+    if not rows:
+        return ""
+
+    prefix6 = normalize_hsn_digits(hsn6)
+    prefix4 = normalize_hsn_digits(hsn4)
+    if len(prefix6) != 6:
+        prefix6 = ""
+    if len(prefix4) != 4:
+        prefix4 = ""
+    if not prefix6 and not prefix4:
+        return ""
+
+    product_tokens = _token_set(product_name)
+
+    candidates = []
+    for row in rows:
+        code = row.get("hsn8", "")
+        if prefix6 and not code.startswith(prefix6):
+            continue
+        if not prefix6 and prefix4 and not code.startswith(prefix4):
+            continue
+        candidates.append(row)
+
+    if not candidates:
+        return ""
+
+    if not product_tokens:
+        return candidates[0].get("hsn8", "")
+
+    def score(row: dict) -> tuple[int, int]:
+        desc_tokens = _token_set(row.get("description", ""))
+        alias_tokens = _token_set(" ".join(row.get("aliases_norm", []) if isinstance(row.get("aliases_norm"), list) else []))
+        all_tokens = desc_tokens | alias_tokens
+        overlap = len(product_tokens & all_tokens)
+        # Use overlap first, then prefer longer specific match prefix (6-digit constrained better than 4-digit).
+        specificity = 2 if prefix6 else 1
+        return (overlap, specificity)
+
+    best = max(candidates, key=score)
+    return best.get("hsn8", "")
+
+
+def _enrich_result_with_master(product_name: str, result: dict) -> dict:
+    if not result:
+        return result
+
+    if result.get("hsn_8digit"):
+        return result
+
+    hsn4 = normalize_hsn_digits(result.get("hsn_4digit", ""))
+    hsn6 = normalize_hsn_digits(result.get("hsn_6digit", ""))
+
+    if len(hsn6) != 6 and len(hsn4) == 4:
+        # Derive a likely 6-digit prefix from text when possible is handled earlier,
+        # otherwise we match by 4-digit bucket.
+        hsn6 = ""
+
+    if len(hsn4) != 4 and len(hsn6) == 6:
+        hsn4 = hsn6[:4]
+
+    best_hsn8 = _best_hsn8_from_master(product_name, hsn4=hsn4, hsn6=hsn6)
+    if best_hsn8 and len(best_hsn8) == 8:
+        result["hsn_8digit"] = best_hsn8
+        result["hsn_4digit"] = best_hsn8[:4]
+    return result
 
 
 def lookup_product_by_name(
@@ -102,6 +230,7 @@ def lookup_product_by_name(
             )
         
         if result:
+            result = _enrich_result_with_master(cleaned_name, result)
             result['input_name'] = cleaned_name
             result['matched_name'] = cleaned_name
             result['name'] = cleaned_name
@@ -152,6 +281,10 @@ def _search_google_for_hsn(product_name: str, num_results: int = 5) -> Optional[
             
             # Extract HSN and category
             extraction = extract_hsn_from_google_result(html_text, product_name)
+            if not extraction.get("hsn_6digit"):
+                hsn6 = _extract_hsn6_from_text(html_text)
+                if hsn6:
+                    extraction["hsn_6digit"] = hsn6
             
             # Accept only if HSN digits were found to avoid unrelated category-only matches.
             if extraction.get('hsn_4digit') or extraction.get('hsn_8digit'):
