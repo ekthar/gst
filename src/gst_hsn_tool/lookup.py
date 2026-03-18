@@ -281,6 +281,7 @@ def lookup_product_by_name(
     search_if_not_found: bool = True,
     force_google_search: bool = False,
     fast_local_first: bool = False,
+    similar_threshold: int = 80,
 ) -> Optional[Dict[str, Any]]:
     """
     Lookup a product by name in database.
@@ -316,7 +317,7 @@ def lookup_product_by_name(
             return local_result
 
     # First, check for similar products in DB
-    similar = None if force_google_search else similarity.find_similar_in_db(cleaned_name)
+    similar = None if force_google_search else similarity.find_similar_in_db(cleaned_name, threshold=similar_threshold)
     
     if similar:
         # Found in DB
