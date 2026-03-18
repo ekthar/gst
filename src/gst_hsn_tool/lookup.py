@@ -8,6 +8,7 @@ import re
 import time
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from typing import Optional, Dict, Any
 from pathlib import Path
@@ -25,6 +26,8 @@ USER_AGENT = (
 )
 
 GOOGLE_SEARCH_URL = "https://www.google.com/search"
+SEARCH_FETCH_WORKERS = 6
+SEARCH_URLS_PER_PRODUCT = 8
 
 NOISE_TOKENS = {
     "rs",
@@ -258,10 +261,7 @@ def _search_google_for_hsn(product_name: str, num_results: int = 5) -> Optional[
 
     urls: list[str] = []
     for query in query_candidates:
-        try:
-            discovered = _get_google_search_urls(query, num_results=num_results)
-        except Exception:
-            discovered = []
+        discovered = list(_get_google_search_urls_cached(query, num_results))
         for link in discovered:
             if link not in urls:
                 urls.append(link)
@@ -272,33 +272,58 @@ def _search_google_for_hsn(product_name: str, num_results: int = 5) -> Optional[
         # No URLs found, use fallback
         return _fallback_hsn_guess(product_name)
     
-    # Try to fetch and extract from first few URLs
-    for idx, url in enumerate(urls[:5]):
-        try:
-            html_text = _fetch_url(url)
-            if not html_text:
+    # Fetch and extract candidates concurrently for speed.
+    best: Optional[Dict[str, Any]] = None
+    best_score = -1
+    candidates = urls[:SEARCH_URLS_PER_PRODUCT]
+    with ThreadPoolExecutor(max_workers=SEARCH_FETCH_WORKERS) as executor:
+        futures = [executor.submit(_fetch_extract_candidate, url, product_name) for url in candidates]
+        for future in as_completed(futures):
+            extraction = future.result()
+            if not extraction:
                 continue
-            
-            # Extract HSN and category
-            extraction = extract_hsn_from_google_result(html_text, product_name)
-            if not extraction.get("hsn_6digit"):
-                hsn6 = _extract_hsn6_from_text(html_text)
-                if hsn6:
-                    extraction["hsn_6digit"] = hsn6
-            
-            # Accept only if HSN digits were found to avoid unrelated category-only matches.
-            if extraction.get('hsn_4digit') or extraction.get('hsn_8digit'):
-                extraction['source_url'] = url
-                return extraction
-            
-            # Small delay to avoid throttling
-            time.sleep(0.3)
-        
-        except Exception as e:
-            continue
+
+            score = 0
+            if extraction.get("hsn_4digit"):
+                score += 1
+            if extraction.get("hsn_6digit"):
+                score += 1
+            if extraction.get("hsn_8digit"):
+                score += 2
+
+            if score > best_score:
+                best = extraction
+                best_score = score
+
+            # Early exit quality threshold.
+            if score >= 3:
+                break
+
+    if best:
+        return best
     
     # If nothing found, use fallback
     return _fallback_hsn_guess(product_name)
+
+
+def _fetch_extract_candidate(url: str, product_name: str) -> Optional[Dict[str, Any]]:
+    try:
+        html_text = _fetch_url(url)
+        if not html_text:
+            return None
+
+        extraction = extract_hsn_from_google_result(html_text, product_name)
+        if not extraction.get("hsn_6digit"):
+            hsn6 = _extract_hsn6_from_text(html_text)
+            if hsn6:
+                extraction["hsn_6digit"] = hsn6
+
+        if extraction.get('hsn_4digit') or extraction.get('hsn_8digit'):
+            extraction['source_url'] = url
+            return extraction
+        return None
+    except Exception:
+        return None
 
 
 def _fallback_hsn_guess(product_name: str) -> Optional[Dict[str, Any]]:
@@ -390,6 +415,11 @@ def _get_google_search_urls(query: str, num_results: int = 5) -> list:
     # Extract result URLs from Google HTML
     urls = _extract_urls_from_google_html(html_text)
     return urls[:num_results]
+
+
+@lru_cache(maxsize=2048)
+def _get_google_search_urls_cached(query: str, num_results: int = 5) -> tuple[str, ...]:
+    return tuple(_get_google_search_urls(query, num_results))
 
 
 def _extract_urls_from_google_html(html_text: str) -> list:

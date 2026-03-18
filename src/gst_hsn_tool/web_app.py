@@ -8,7 +8,7 @@ from __future__ import annotations
 import io
 import csv
 import sys
-import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -221,6 +221,14 @@ def _bulk_upload_tab() -> None:
                 product_names = df[product_column].dropna().astype(str).tolist()
                 
                 st.info(f"📊 **{len(product_names)}** products ready to lookup")
+
+                speed_col1, speed_col2, speed_col3 = st.columns(3)
+                with speed_col1:
+                    max_workers = st.slider("Parallel workers", min_value=2, max_value=24, value=10, step=2)
+                with speed_col2:
+                    dedupe_names = st.checkbox("Deduplicate exact names", value=True)
+                with speed_col3:
+                    show_live_details = st.checkbox("Show live details (slower)", value=False)
                 
                 # Start lookup button
                 if st.button("🚀 Start Auto-Lookup (Background)", use_container_width=True):
@@ -231,87 +239,84 @@ def _bulk_upload_tab() -> None:
                     results_container = st.container()
                     
                     # Store results
-                    all_results = []
+                    all_results: list[dict | None] = [None] * len(product_names)
                     success_count = 0
+                    processed = 0
+
+                    # Build unique-name map to reduce duplicate searches.
+                    key_to_indexes: dict[str, list[int]] = {}
+                    key_to_name: dict[str, str] = {}
+                    for idx, raw_name in enumerate(product_names):
+                        cleaned = str(raw_name).strip()
+                        key = cleaned.lower() if dedupe_names else f"{idx}:{cleaned.lower()}"
+                        key_to_name.setdefault(key, cleaned)
+                        key_to_indexes.setdefault(key, []).append(idx)
                     
-                    # Process each product
-                    for idx, product_name in enumerate(product_names):
-                        # Update progress
-                        progress = (idx + 1) / len(product_names)
-                        progress_bar.progress(progress)
-                        status_text.text(f"⏳ Processing: {idx + 1}/{len(product_names)} | ✅ Saved: {success_count}")
-                        
-                        # Lookup product
-                        try:
-                            result = lookup_product_by_name(
-                                product_name.strip(),
-                                auto_store=True,  # Auto-save to DB
-                                search_if_not_found=True,
-                                force_google_search=True,
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        future_map = {
+                            executor.submit(
+                                lookup_product_by_name,
+                                key_to_name[key],
+                                True,
+                                True,
+                                True,
+                            ): key
+                            for key in key_to_indexes
+                        }
+
+                        for future in as_completed(future_map):
+                            key = future_map[future]
+                            canonical_name = key_to_name[key]
+                            indexes = key_to_indexes[key]
+
+                            result = None
+                            error_text = None
+                            try:
+                                result = future.result()
+                            except Exception as exc:
+                                error_text = str(exc)[:60]
+
+                            for row_idx in indexes:
+                                original_name = str(product_names[row_idx]).strip()
+                                if result:
+                                    row = {
+                                        'input_name': original_name,
+                                        'matched_name': result.get('matched_name') or result.get('name') or original_name,
+                                        'category': result.get('category'),
+                                        'hsn_4digit': result.get('hsn_4digit'),
+                                        'hsn_8digit': result.get('hsn_8digit'),
+                                        'source_url': result.get('source_url'),
+                                        'match_type': result.get('match_type', 'unknown'),
+                                        'confidence': result.get('confidence'),
+                                        'is_new': result.get('is_new', False),
+                                    }
+                                    all_results[row_idx] = row
+                                    if row['hsn_4digit']:
+                                        success_count += 1
+                                else:
+                                    all_results[row_idx] = {
+                                        'input_name': original_name,
+                                        'matched_name': None,
+                                        'category': 'Error' if error_text else None,
+                                        'hsn_4digit': None,
+                                        'hsn_8digit': None,
+                                        'source_url': None,
+                                        'match_type': f'error: {error_text}' if error_text else 'not_found',
+                                        'confidence': None,
+                                        'is_new': False,
+                                    }
+                                processed += 1
+
+                            progress = processed / max(1, len(product_names))
+                            progress_bar.progress(progress)
+                            status_text.text(
+                                f"⏳ Processing: {processed}/{len(product_names)} | ✅ Saved: {success_count} | ⚡ Workers: {max_workers}"
                             )
-                            
-                            if result:
-                                row = {
-                                    'input_name': product_name.strip(),
-                                    'matched_name': result.get('matched_name') or result.get('name') or product_name.strip(),
-                                    'category': result.get('category'),
-                                    'hsn_4digit': result.get('hsn_4digit'),
-                                    'hsn_8digit': result.get('hsn_8digit'),
-                                    'source_url': result.get('source_url'),
-                                    'match_type': result.get('match_type', 'unknown'),
-                                    'confidence': result.get('confidence'),
-                                    'is_new': result.get('is_new', False),
-                                }
-                                all_results.append(row)
-                                if row['hsn_4digit']:
-                                    success_count += 1
-                                
-                                # Show real-time result in expandable section
+
+                            if show_live_details:
                                 with results_container:
-                                    with st.expander(
-                                        f"✅ {product_name} → {result.get('category', 'N/A')} (HSN: {result.get('hsn_4digit', 'N/A')})",
-                                        expanded=False
-                                    ):
-                                        col1, col2, col3 = st.columns(3)
-                                        with col1:
-                                            st.write(f"**Product:** {result.get('name')}")
-                                        with col2:
-                                            st.write(f"**Category:** {result.get('category')}")
-                                        with col3:
-                                            st.write(f"**4-digit HSN:** {result.get('hsn_4digit')}")
-                                        
-                                        if result.get('hsn_8digit'):
-                                            st.write(f"**8-digit HSN:** {result.get('hsn_8digit')}")
-                                        
-                                        st.write(f"**Match Type:** {result.get('match_type', 'unknown').replace('_', ' ').title()}")
-                            else:
-                                all_results.append({
-                                    'input_name': product_name,
-                                    'matched_name': None,
-                                    'category': None,
-                                    'hsn_4digit': None,
-                                    'hsn_8digit': None,
-                                    'source_url': None,
-                                    'match_type': 'not_found',
-                                    'confidence': None,
-                                    'is_new': False,
-                                })
-                        
-                        except Exception as e:
-                            all_results.append({
-                                'input_name': product_name,
-                                'matched_name': None,
-                                'category': 'Error',
-                                'hsn_4digit': None,
-                                'hsn_8digit': None,
-                                'source_url': None,
-                                'match_type': f'error: {str(e)[:30]}',
-                                'confidence': None,
-                                'is_new': False,
-                            })
-                        
-                        # Small delay to avoid throttling
-                        time.sleep(0.2)
+                                    outcome = result.get('hsn_4digit') if result else 'N/A'
+                                    st.caption(f"{canonical_name} -> HSN {outcome}")
                     
                     # Completion
                     progress_bar.progress(1.0)
@@ -330,7 +335,7 @@ def _bulk_upload_tab() -> None:
                     
                     # Results table
                     st.subheader("📋 Results Summary")
-                    results_df = pd.DataFrame(all_results)
+                    results_df = pd.DataFrame([r for r in all_results if r is not None])
                     st.dataframe(results_df, use_container_width=True)
                     
                     # Download options
