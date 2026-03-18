@@ -246,7 +246,8 @@ def _bulk_upload_tab() -> None:
                             result = lookup_product_by_name(
                                 product_name.strip(),
                                 auto_store=True,  # Auto-save to DB
-                                search_if_not_found=True
+                                search_if_not_found=True,
+                                force_google_search=True,
                             )
                             
                             if result:

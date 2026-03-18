@@ -3,6 +3,7 @@ Product lookup module - searches Google for HSN code by product name.
 """
 
 import json
+import html
 import re
 import time
 import urllib.parse
@@ -22,11 +23,45 @@ USER_AGENT = (
 
 GOOGLE_SEARCH_URL = "https://www.google.com/search"
 
+NOISE_TOKENS = {
+    "rs",
+    "mrp",
+    "offer",
+    "small",
+    "big",
+    "pack",
+    "combo",
+    "free",
+    "pcs",
+    "pc",
+    "gm",
+    "kg",
+    "ml",
+    "ltr",
+}
+
+
+def _normalize_product_query(product_name: str) -> str:
+    """Clean noisy commercial tokens to improve Google query relevance."""
+    raw = product_name.lower().replace("/", " ").replace("-", " ")
+    parts = [p.strip() for p in raw.split() if p.strip()]
+    cleaned = []
+    for part in parts:
+        if part.isdigit():
+            continue
+        if part in NOISE_TOKENS:
+            continue
+        if re.fullmatch(r"rs\.?\d+", part):
+            continue
+        cleaned.append(part)
+    return " ".join(cleaned).strip() or product_name.strip()
+
 
 def lookup_product_by_name(
     product_name: str,
     auto_store: bool = True,
-    search_if_not_found: bool = True
+    search_if_not_found: bool = True,
+    force_google_search: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """
     Lookup a product by name in database.
@@ -40,7 +75,7 @@ def lookup_product_by_name(
     cleaned_name = product_name.strip()
 
     # First, check for similar products in DB
-    similar = similarity.find_similar_in_db(cleaned_name)
+    similar = None if force_google_search else similarity.find_similar_in_db(cleaned_name)
     
     if similar:
         # Found in DB
@@ -70,6 +105,7 @@ def lookup_product_by_name(
             result['input_name'] = cleaned_name
             result['matched_name'] = cleaned_name
             result['name'] = cleaned_name
+            result['searched_on_google'] = True
             result['is_new'] = True
             result['match_type'] = 'google_search'
         
@@ -84,13 +120,24 @@ def _search_google_for_hsn(product_name: str, num_results: int = 5) -> Optional[
     Returns best result found with extracted HSN and category.
     """
     
-    query = f"{product_name} hsn code"
-    
-    try:
-        urls = _get_google_search_urls(query, num_results=num_results)
-    except Exception as e:
-        # Fallback: return partial result based on product name
-        return _fallback_hsn_guess(product_name)
+    normalized_name = _normalize_product_query(product_name)
+    query_candidates = [
+        f"{normalized_name} hsn code",
+        f"{normalized_name} gst hsn code india",
+        f"{normalized_name} 8 digit hsn",
+    ]
+
+    urls: list[str] = []
+    for query in query_candidates:
+        try:
+            discovered = _get_google_search_urls(query, num_results=num_results)
+        except Exception:
+            discovered = []
+        for link in discovered:
+            if link not in urls:
+                urls.append(link)
+        if len(urls) >= num_results:
+            break
     
     if not urls:
         # No URLs found, use fallback
@@ -131,6 +178,7 @@ def _fallback_hsn_guess(product_name: str) -> Optional[Dict[str, Any]]:
         # Food & Beverages
         ('chocolate', 'cadbury', 'biscuit', 'cookie', 'candy', 'confection'): ('Food & Beverages', '2106'),
         ('coffee', 'tea', 'beverage', 'drink', 'juice'): ('Food & Beverages', '2202'),
+        ('egg', 'eggs', 'poultry', 'hen'): ('Animal Products', '0407'),
         
         # Electronics
         ('laptop', 'computer', 'phone', 'mobile', 'iphone', 'samsung'): ('Electronics', '8471'),
@@ -190,25 +238,26 @@ def _extract_urls_from_google_html(html_text: str) -> list:
     """
     urls = []
     
-    # Multiple regex patterns to handle different Google HTML formats
     patterns = [
-        r'/url\?q=([^&]+)',  # Standard format
-        r'/url\?url=([^&]+)',  # Alternative format
-        r'href="(/url\?[^"]*)"',  # href attribute
-        r'data-url="([^"]*)"',  # data attribute
+        r'href=["\']/url\?(?:q|url)=([^"\'&]+)',
+        r'href=["\']https?://(?:www\.)?google\.[^/]+/url\?(?:q|url)=([^"\'&]+)',
+        r'data-url=["\'](https?://[^"\']+)["\']',
+        r'href=["\'](https?://[^"\']+)["\']',
     ]
-    
+
     for pattern in patterns:
-        matches = re.findall(pattern, html_text)
+        matches = re.findall(pattern, html_text, flags=re.IGNORECASE)
         for match in matches:
-            # Decode URL-encoded string
             try:
-                decoded_url = urllib.parse.unquote(match)
-                # Filter out Google's own URLs
-                if decoded_url.startswith('http') and 'google' not in decoded_url:
-                    urls.append(decoded_url)
-            except:
-                pass
+                decoded_url = html.unescape(urllib.parse.unquote(match))
+                if not decoded_url.startswith(("http://", "https://")):
+                    continue
+                domain = urllib.parse.urlparse(decoded_url).netloc.lower()
+                if "google." in domain:
+                    continue
+                urls.append(decoded_url)
+            except Exception:
+                continue
     
     # Remove duplicates while preserving order
     seen = set()

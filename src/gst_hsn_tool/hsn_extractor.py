@@ -45,6 +45,10 @@ def extract_hsn_from_text(text: str) -> Dict[str, Optional[str]]:
     
     # Extract 8-digit HSN (more specific)
     hsn_8_matches = re.findall(r'\b(\d{8})\b', text)
+    # Also support spaced/hyphen format like 0407 21 00 / 0407-21-00
+    grouped_8_matches = re.findall(r'\b(\d{4})[\s\-]?(\d{2})[\s\-]?(\d{2})\b', text)
+    for g1, g2, g3 in grouped_8_matches:
+        hsn_8_matches.append(f"{g1}{g2}{g3}")
     if hsn_8_matches:
         # Filter for plausible HSN codes (01000000 to 99999999)
         for match in hsn_8_matches:
@@ -59,6 +63,7 @@ def extract_hsn_from_text(text: str) -> Dict[str, Optional[str]]:
             r'hsn\s+(?:code\s+)?(\d{4})',
             r'hsn\s*:\s*(\d{4})',
             r'(\d{4})\s+hsn',
+            r'chapter\s*(\d{2})\b',
         ]
         for pattern in hsn_4_patterns:
             matches = re.findall(pattern, text)
@@ -109,6 +114,10 @@ def extract_hsn_from_google_result(page_text: str, product_name: str) -> Dict[st
                     break
             if result['hsn_4digit'] or result['hsn_8digit']:
                 break
+
+    # Normalize chapter-level match to 4 digit if only 2-digit was found.
+    if result['hsn_4digit'] and len(result['hsn_4digit']) == 2:
+        result['hsn_4digit'] = f"{result['hsn_4digit']}00"
     
     return result
 
