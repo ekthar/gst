@@ -8,6 +8,7 @@ from __future__ import annotations
 import io
 import csv
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -188,26 +189,19 @@ def _lookup_tab() -> None:
 
 
 def _bulk_upload_tab() -> None:
-    """Bulk upload tab for Excel/CSV files"""
-    st.header("📁 Bulk Upload & Lookup")
+    """Bulk upload tab for Excel/CSV files with real-time DB updates"""
+    st.header("📁 Bulk Upload & Auto-Lookup")
     
-    st.write("Upload a file with product names. We'll lookup HSN codes and store them in the database.")
+    st.write("Upload Excel/CSV → Auto-search HSN for each product → Results saved to DB in real-time")
     
-    col1, col2 = st.columns([2, 1])
+    # File uploader
+    uploaded_file = st.file_uploader(
+        "📄 Upload Excel (.xlsx) or CSV file",
+        type=["xlsx", "csv"],
+        key="bulk_upload"
+    )
     
-    with col1:
-        uploaded_file = st.file_uploader(
-            "Upload Excel (.xlsx) or CSV file",
-            type=["xlsx", "csv"],
-            key="bulk_upload"
-        )
-    
-    with col2:
-        st.write("")
-        st.write("")
-        auto_lookup = st.checkbox("Auto lookup 🔍", value=True)
-    
-    if uploaded_file and auto_lookup:
+    if uploaded_file:
         try:
             # Read file
             if uploaded_file.name.endswith('.xlsx'):
@@ -215,73 +209,164 @@ def _bulk_upload_tab() -> None:
             else:
                 df = pd.read_csv(uploaded_file)
             
-            st.write(f"📊 Loaded {len(df)} rows from file")
+            st.success(f"✅ Loaded {len(df)} rows from file")
             
             # Show preview
-            st.write("**Preview:**")
-            st.dataframe(df.head(), use_container_width=True)
+            with st.expander("👀 Preview data", expanded=True):
+                st.dataframe(df.head(10), use_container_width=True)
             
-            # Get product names (assume first column)
+            # Get product names (first column)
             if len(df.columns) > 0:
                 product_column = df.columns[0]
                 product_names = df[product_column].dropna().astype(str).tolist()
                 
-                st.write(f"**Products to lookup:** {len(product_names)}")
+                st.info(f"📊 **{len(product_names)}** products ready to lookup")
                 
-                if st.button("🚀 Run Lookup", use_container_width=True):
-                    # Show progress
+                # Start lookup button
+                if st.button("🚀 Start Auto-Lookup (Background)", use_container_width=True):
+                    
+                    # Create real-time progress display
                     progress_bar = st.progress(0)
                     status_text = st.empty()
+                    results_container = st.container()
                     
-                    def update_progress(current, total):
-                        progress_bar.progress(current / total)
-                        status_text.text(f"Progress: {current}/{total}")
+                    # Store results
+                    all_results = []
+                    success_count = 0
                     
-                    # Run bulk lookup
-                    results = bulk_lookup_products(
-                        product_names,
-                        auto_store=True,
-                        progress_callback=update_progress
-                    )
+                    # Process each product
+                    for idx, product_name in enumerate(product_names):
+                        # Update progress
+                        progress = (idx + 1) / len(product_names)
+                        progress_bar.progress(progress)
+                        status_text.text(f"⏳ Processing: {idx + 1}/{len(product_names)} | ✅ Saved: {success_count}")
+                        
+                        # Lookup product
+                        try:
+                            result = lookup_product_by_name(
+                                product_name.strip(),
+                                auto_store=True,  # Auto-save to DB
+                                search_if_not_found=True
+                            )
+                            
+                            if result:
+                                all_results.append(result)
+                                success_count += 1
+                                
+                                # Show real-time result in expandable section
+                                with results_container:
+                                    with st.expander(
+                                        f"✅ {product_name} → {result.get('category', 'N/A')} (HSN: {result.get('hsn_4digit', 'N/A')})",
+                                        expanded=False
+                                    ):
+                                        col1, col2, col3 = st.columns(3)
+                                        with col1:
+                                            st.write(f"**Product:** {result.get('name')}")
+                                        with col2:
+                                            st.write(f"**Category:** {result.get('category')}")
+                                        with col3:
+                                            st.write(f"**4-digit HSN:** {result.get('hsn_4digit')}")
+                                        
+                                        if result.get('hsn_8digit'):
+                                            st.write(f"**8-digit HSN:** {result.get('hsn_8digit')}")
+                                        
+                                        st.write(f"**Match Type:** {result.get('match_type', 'unknown').replace('_', ' ').title()}")
+                            else:
+                                all_results.append({
+                                    'name': product_name,
+                                    'category': None,
+                                    'hsn_4digit': None,
+                                    'hsn_8digit': None,
+                                    'match_type': 'not_found'
+                                })
+                        
+                        except Exception as e:
+                            all_results.append({
+                                'name': product_name,
+                                'category': 'Error',
+                                'hsn_4digit': None,
+                                'hsn_8digit': None,
+                                'match_type': f'error: {str(e)[:30]}'
+                            })
+                        
+                        # Small delay to avoid throttling
+                        time.sleep(0.2)
                     
+                    # Completion
                     progress_bar.progress(1.0)
                     status_text.empty()
                     
-                    # Show results
-                    st.success(f"✅ Lookup complete! Found {len([r for r in results if r.get('hsn_4digit')])} HSN codes")
+                    st.success(f"✅ **Lookup Complete!** Saved {success_count}/{len(product_names)} products to database")
                     
-                    # Convert to dataframe for display
-                    results_df = pd.DataFrame(results)
+                    # Show summary stats
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Total Processed", len(product_names))
+                    with col2:
+                        st.metric("Successfully Added", success_count)
+                    with col3:
+                        st.metric("Failed/Skipped", len(product_names) - success_count)
+                    
+                    # Results table
+                    st.subheader("📋 Results Summary")
+                    results_df = pd.DataFrame(all_results)
                     st.dataframe(results_df, use_container_width=True)
                     
-                    # Offer download
-                    csv_buffer = io.StringIO()
-                    results_df.to_csv(csv_buffer, index=False)
-                    csv_data = csv_buffer.getvalue()
+                    # Download options
+                    st.divider()
+                    st.subheader("📥 Download Results")
                     
-                    st.download_button(
-                        label="📥 Download Results as CSV",
-                        data=csv_data,
-                        file_name=f"gst_hsn_lookup_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                        mime="text/csv",
-                        use_container_width=True
-                    )
+                    col1, col2 = st.columns(2)
                     
-                    # Also offer Excel format
-                    excel_buffer = io.BytesIO()
-                    results_df.to_excel(excel_buffer, index=False, sheet_name="HSN Results")
-                    excel_buffer.seek(0)
+                    with col1:
+                        # CSV download
+                        csv_buffer = io.StringIO()
+                        results_df.to_csv(csv_buffer, index=False)
+                        csv_data = csv_buffer.getvalue()
+                        
+                        st.download_button(
+                            label="📥 Download as CSV",
+                            data=csv_data,
+                            file_name=f"gst_hsn_lookup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                            mime="text/csv",
+                            use_container_width=True
+                        )
                     
-                    st.download_button(
-                        label="📥 Download Results as Excel",
-                        data=excel_buffer.getvalue(),
-                        file_name=f"gst_hsn_lookup_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
+                    with col2:
+                        # Excel download
+                        excel_buffer = io.BytesIO()
+                        results_df.to_excel(excel_buffer, index=False, sheet_name="HSN Lookup")
+                        excel_buffer.seek(0)
+                        
+                        st.download_button(
+                            label="📥 Download as Excel",
+                            data=excel_buffer.getvalue(),
+                            file_name=f"gst_hsn_lookup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
         
         except Exception as e:
-            st.error(f"Error processing file: {str(e)}")
+            st.error(f"❌ Error processing file: {str(e)}")
+    
+    else:
+        # Show file format guide
+        st.info("📝 **File Format Guide:**")
+        st.markdown("""
+        Your Excel/CSV should have product names in the **first column**:
+        
+        | Product Name | (other columns ignored) |
+        |---|---|
+        | Cadbury Silk | ... |
+        | Laptop | ... |
+        | Cotton Fabric | ... |
+        
+        The app will:
+        1. 🔍 Search for HSN code for each product
+        2. 💾 Save to database automatically
+        3. 📊 Show results in real-time
+        4. 📥 Let you download the results
+        """)
 
 
 def _database_tab() -> None:
@@ -290,81 +375,133 @@ def _database_tab() -> None:
     
     # Show stats
     total_count = db.get_total_count()
-    st.metric("Total Products in Database", total_count)
+    st.metric("📊 Total Products in Database", total_count)
     
     st.divider()
     
-    # View products
-    st.subheader("View Products")
+    # Tabs for different database operations
+    tab_view, tab_search, tab_delete, tab_reset = st.tabs([
+        "View All",
+        "Search",
+        "Delete Item",
+        "Reset Database"
+    ])
     
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        search_query = st.text_input("Search products by name", placeholder="e.g., Cadbury")
-    
-    with col2:
-        st.write("")
-        st.write("")
-        limit = st.selectbox("Limit results", [10, 25, 50, 100, 500])
-    
-    if search_query:
-        products = db.search_products(search_query.strip(), limit=limit)
-    else:
+    with tab_view:
+        st.subheader("📋 All Products")
+        limit = st.selectbox("Show limit:", [10, 25, 50, 100, 500, 1000], key="view_limit")
+        
         products = db.get_all_products(limit=limit)
-    
-    if products:
-        # Convert to dataframe
-        df = pd.DataFrame(products)
-        # Drop id column for display
-        df = df.drop('id', axis=1)
-        # Rename columns
-        df = df.rename(columns={
-            'name': 'Product Name',
-            'category': 'Category',
-            'hsn_4digit': '4-Digit HSN',
-            'hsn_8digit': '8-Digit HSN',
-            'source_url': 'Source URL',
-            'created_at': 'Created'
-        })
         
-        st.dataframe(df, use_container_width=True)
+        if products:
+            df = pd.DataFrame(products)
+            df = df.drop('id', axis=1)
+            df = df.rename(columns={
+                'name': 'Product Name',
+                'category': 'Category',
+                'hsn_4digit': '4-Digit HSN',
+                'hsn_8digit': '8-Digit HSN',
+                'source_url': 'Source URL',
+                'created_at': 'Created'
+            })
+            
+            st.dataframe(df, use_container_width=True, height=500)
+            
+            # Export option
+            csv_buffer = io.StringIO()
+            df.to_csv(csv_buffer, index=False)
+            csv_data = csv_buffer.getvalue()
+            
+            st.download_button(
+                label="📥 Download All as CSV",
+                data=csv_data,
+                file_name=f"gst_hsn_db_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        else:
+            st.info("📭 No products in database yet. Start by uploading a file!")
+    
+    with tab_search:
+        st.subheader("🔍 Search Products")
+        search_query = st.text_input("Search by product name", placeholder="e.g., Cadbury")
         
-        # Export option
-        csv_buffer = io.StringIO()
-        df.to_csv(csv_buffer, index=False)
-        csv_data = csv_buffer.getvalue()
+        if search_query:
+            products = db.search_products(search_query.strip(), limit=100)
+            
+            if products:
+                df = pd.DataFrame(products)
+                df = df.drop('id', axis=1)
+                df = df.rename(columns={
+                    'name': 'Product Name',
+                    'category': 'Category',
+                    'hsn_4digit': '4-Digit HSN',
+                    'hsn_8digit': '8-Digit HSN',
+                    'source_url': 'Source URL',
+                    'created_at': 'Created'
+                })
+                
+                st.dataframe(df, use_container_width=True)
+                st.success(f"✅ Found {len(df)} products")
+            else:
+                st.warning(f"❌ No products found matching '{search_query}'")
+    
+    with tab_delete:
+        st.subheader("🗑️ Delete Product")
         
-        st.download_button(
-            label="📥 Download as CSV",
-            data=csv_data,
-            file_name=f"gst_hsn_database_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
-    else:
-        st.info("No products found in database")
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            product_to_delete = st.text_input("Enter product name to delete", key="delete_product")
+        
+        with col2:
+            st.write("")
+            st.write("")
+            if st.button("🗑️ Delete", use_container_width=True, key="delete_btn"):
+                if product_to_delete:
+                    success = db.delete_product(product_to_delete.strip())
+                    if success:
+                        st.success(f"✅ Deleted: {product_to_delete}")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ Product not found: {product_to_delete}")
     
-    st.divider()
-    
-    # Delete product
-    st.subheader("Delete Product")
-    
-    col1, col2 = st.columns([3, 1])
-    
-    with col1:
-        product_to_delete = st.text_input("Enter product name to delete", key="delete_product")
-    
-    with col2:
-        st.write("")
-        st.write("")
-        if st.button("🗑️ Delete", use_container_width=True):
-            if product_to_delete:
-                success = db.delete_product(product_to_delete.strip())
-                if success:
-                    st.success(f"✅ Deleted: {product_to_delete}")
-                    st.rerun()
-                else:
-                    st.error(f"Product not found: {product_to_delete}")
+    with tab_reset:
+        st.subheader("⚠️ Reset Database")
+        st.warning("⚠️ **Warning:** This will delete ALL products in the database and cannot be undone!")
+        
+        st.markdown("""
+        Use this option to:
+        - Start fresh with a clean database
+        - Remove all previous lookups
+        - Clear space for new data
+        """)
+        
+        if st.checkbox("I understand and want to delete all data", key="confirm_reset"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("🔄 Reset Database to Empty", use_container_width=True, key="reset_btn"):
+                    try:
+                        # Delete the database file
+                        from pathlib import Path
+                        db_path = Path(__file__).parent.parent.parent / "data" / "db" / "gst_hsn.db"
+                        if db_path.exists():
+                            db_path.unlink()
+                            st.success("✅ Database reset successfully!")
+                            st.info("📝 Database will be recreated on next lookup. Reloading...")
+                            st.rerun()
+                        else:
+                            st.info("ℹ️ Database file not found, creating fresh...")
+                            db.init_db()
+                            st.success("✅ Fresh database created!")
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error resetting database: {str(e)}")
+            
+            with col2:
+                current_count = db.get_total_count()
+                st.metric("Products to Delete", current_count)
 
 
 def _mapping_tab() -> None:
