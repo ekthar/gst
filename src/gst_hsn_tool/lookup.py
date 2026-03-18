@@ -76,15 +76,20 @@ def _search_google_for_hsn(product_name: str, num_results: int = 5) -> Optional[
     Returns best result found with extracted HSN and category.
     """
     
-    query = f"{product_name} 8 digit hsn code india"
+    query = f"{product_name} hsn code"
     
     try:
         urls = _get_google_search_urls(query, num_results=num_results)
     except Exception as e:
-        return None
+        # Fallback: return partial result based on product name
+        return _fallback_hsn_guess(product_name)
+    
+    if not urls:
+        # No URLs found, use fallback
+        return _fallback_hsn_guess(product_name)
     
     # Try to fetch and extract from first few URLs
-    for url in urls[:3]:
+    for idx, url in enumerate(urls[:5]):
         try:
             html_text = _fetch_url(url)
             if not html_text:
@@ -94,17 +99,60 @@ def _search_google_for_hsn(product_name: str, num_results: int = 5) -> Optional[
             extraction = extract_hsn_from_google_result(html_text, product_name)
             
             # If we found at least category or HSN, return it
-            if extraction['category'] or extraction['hsn_4digit'] or extraction['hsn_8digit']:
+            if extraction.get('category') or extraction.get('hsn_4digit') or extraction.get('hsn_8digit'):
                 extraction['source_url'] = url
                 return extraction
             
             # Small delay to avoid throttling
-            time.sleep(0.5)
+            time.sleep(0.3)
         
         except Exception as e:
             continue
     
-    return None
+    # If nothing found, use fallback
+    return _fallback_hsn_guess(product_name)
+
+
+def _fallback_hsn_guess(product_name: str) -> Dict[str, Any]:
+    """
+    Fallback method to guess HSN category based on product name keywords.
+    """
+    keywords = product_name.lower().split()
+    
+    category_map = {
+        # Food & Beverages
+        ('chocolate', 'cadbury', 'biscuit', 'cookie', 'candy', 'confection'): ('Food & Beverages', '2106'),
+        ('coffee', 'tea', 'beverage', 'drink', 'juice'): ('Food & Beverages', '2202'),
+        
+        # Electronics
+        ('laptop', 'computer', 'phone', 'mobile', 'iphone', 'samsung'): ('Electronics', '8471'),
+        ('tv', 'monitor', 'display', 'screen'): ('Electronics', '8528'),
+        
+        # Textiles
+        ('cotton', 'fabric', 'cloth', 'textile', 'shirt', 'pant', 'dress'): ('Textiles', '5208'),
+        
+        # Cosmetics
+        ('soap', 'shampoo', 'cosmetic', 'beauty', 'cream', 'lotion'): ('Cosmetics', '3304'),
+    }
+    
+    # Try to match keywords
+    for keywords_tuple, (category, hsn_4) in category_map.items():
+        for keyword in keywords:
+            if keyword in keywords_tuple:
+                return {
+                    'category': category,
+                    'hsn_4digit': hsn_4,
+                    'hsn_8digit': None,
+                    'source_url': None
+                }
+    
+    # Default
+    return {
+        'category': 'Miscellaneous',
+        'hsn_4digit': '9999',
+        'hsn_8digit': None,
+        'source_url': None
+    }
 
 
 def _get_google_search_urls(query: str, num_results: int = 5) -> list:

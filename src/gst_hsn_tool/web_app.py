@@ -116,48 +116,75 @@ def _lookup_tab() -> None:
         search_button = st.button("🔍 Search", use_container_width=True)
     
     if search_button and product_name:
-        st.info(f"Searching for '{product_name}'...")
+        st.info(f"🔍 Searching for '{product_name}'...")
         
-        with st.spinner("Searching database and Google..."):
-            result = lookup_product_by_name(
-                product_name.strip(),
-                auto_store=True,
-                search_if_not_found=True
-            )
-        
-        if result:
-            # Display results
-            col1, col2, col3, col4 = st.columns(4)
+        try:
+            with st.spinner("Checking database and Google..."):
+                result = lookup_product_by_name(
+                    product_name.strip(),
+                    auto_store=True,
+                    search_if_not_found=True
+                )
             
-            with col1:
-                st.metric("Product Name", result.get('name', 'N/A'))
-            with col2:
-                st.metric("Category", result.get('category', 'Not found'))
-            with col3:
-                st.metric("4-Digit HSN", result.get('hsn_4digit', 'Not found'))
-            with col4:
-                st.metric("8-Digit HSN", result.get('hsn_8digit', 'Not found'))
-            
-            # Show match details
-            st.divider()
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.write(f"**Match Type:** {result.get('match_type', 'Unknown')}")
-                if result.get('match_type') == 'fuzzy' or result.get('match_type') == 'keyword':
-                    st.write(f"**Confidence:** {result.get('confidence', 'N/A')}%")
-            
-            with col2:
-                if result.get('source_url'):
-                    st.write(f"**Source:** [Link]({result['source_url']})")
-            
-            # Show if it's new
-            if result.get('is_new'):
-                st.success("✅ Product added to database!")
+            if result:
+                # Display results in columns
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("Product", result.get('name', 'N/A')[:20])
+                with col2:
+                    st.metric("Category", result.get('category', 'Not found'))
+                with col3:
+                    st.metric("4-Digit HSN", result.get('hsn_4digit', 'N/A'))
+                with col4:
+                    st.metric("8-Digit HSN", result.get('hsn_8digit', 'N/A') or 'Searching...')
+                
+                # Show match details
+                st.divider()
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    match_type = result.get('match_type', 'Unknown')
+                    st.write(f"**Match Type:** {match_type.replace('_', ' ').title()}")
+                
+                with col2:
+                    if result.get('match_type') in ['fuzzy', 'keyword']:
+                        confidence = result.get('confidence', 'N/A')
+                        st.write(f"**Confidence:** {confidence}%")
+                    elif result.get('match_type') == 'database':
+                        st.write("**Status:** ✅ Exact database match")
+                    else:
+                        st.write("**Status:** 🔎 Found via Google search")
+                
+                with col3:
+                    if result.get('source_url'):
+                        st.write(f"**Source:** [Link]({result['source_url'][:50]}...)")
+                
+                st.divider()
+                
+                # Show if it's new
+                if result.get('is_new'):
+                    st.success("✅ New product added to database!")
+                else:
+                    st.info("ℹ️ Product found in database")
             else:
-                st.info("ℹ️ Product found in database")
-        else:
-            st.warning("Product not found in database or Google search")
+                st.warning("⚠️ Could not find product information. Try different name.")
+        
+        except Exception as e:
+            st.error(f"❌ Error during search: {str(e)}")
+            st.info("Try refreshing and searching again")
+    
+    # Show example searches
+    st.divider()
+    st.markdown("### 📚 Example Searches")
+    st.markdown("""
+    Try these products:
+    - **Cadbury Silk** (Chocolate/Confectionery)
+    - **Laptop** (Electronics)
+    - **Cotton Shirt** (Textiles)
+    - **iPhone** (Electronics)
+    - **Tea** (Beverages)
+    """)
 
 
 def _bulk_upload_tab() -> None:
