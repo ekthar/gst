@@ -295,13 +295,21 @@ def lookup_product_by_name(
         if local_result:
             local_result = _enrich_result_with_master(cleaned_name, local_result)
             if auto_store and local_result.get("hsn_4digit"):
-                db.insert_product(
+                inserted = db.insert_product(
                     name=cleaned_name,
                     category=local_result.get("category"),
                     hsn_4digit=local_result.get("hsn_4digit"),
                     hsn_8digit=local_result.get("hsn_8digit"),
                     source_url=local_result.get("source_url"),
                 )
+                if not inserted:
+                    db.update_product(
+                        name=cleaned_name,
+                        category=local_result.get("category"),
+                        hsn_4digit=local_result.get("hsn_4digit"),
+                        hsn_8digit=local_result.get("hsn_8digit"),
+                        source_url=local_result.get("source_url"),
+                    )
             local_result["input_name"] = cleaned_name
             local_result["matched_name"] = cleaned_name
             local_result["name"] = cleaned_name
@@ -314,9 +322,19 @@ def lookup_product_by_name(
     similar = None if force_google_search else similarity.find_similar_in_db(cleaned_name, threshold=similar_threshold)
     
     if similar:
+        # Backfill missing hsn_8digit from master when possible.
+        enriched_similar = _enrich_result_with_master(cleaned_name, dict(similar))
+        if auto_store and enriched_similar.get("hsn_8digit") and not similar.get("hsn_8digit"):
+            db.update_product(
+                name=similar.get("name", cleaned_name),
+                category=enriched_similar.get("category"),
+                hsn_4digit=enriched_similar.get("hsn_4digit"),
+                hsn_8digit=enriched_similar.get("hsn_8digit"),
+                source_url=enriched_similar.get("source_url"),
+            )
         # Found in DB
         return {
-            **similar,
+            **enriched_similar,
             'input_name': cleaned_name,
             'matched_name': similar.get('name'),
             'name': cleaned_name,
@@ -326,19 +344,25 @@ def lookup_product_by_name(
     # Not in DB, try Google search if enabled
     if search_if_not_found:
         result = _search_google_for_hsn(cleaned_name)
-        
-        if result and auto_store and result.get('hsn_4digit'):
-            # Store in DB
-            db.insert_product(
-                name=cleaned_name,
-                category=result.get('category'),
-                hsn_4digit=result.get('hsn_4digit'),
-                hsn_8digit=result.get('hsn_8digit'),
-                source_url=result.get('source_url')
-            )
-        
+
         if result:
             result = _enrich_result_with_master(cleaned_name, result)
+            if auto_store and result.get('hsn_4digit'):
+                inserted = db.insert_product(
+                    name=cleaned_name,
+                    category=result.get('category'),
+                    hsn_4digit=result.get('hsn_4digit'),
+                    hsn_8digit=result.get('hsn_8digit'),
+                    source_url=result.get('source_url')
+                )
+                if not inserted:
+                    db.update_product(
+                        name=cleaned_name,
+                        category=result.get('category'),
+                        hsn_4digit=result.get('hsn_4digit'),
+                        hsn_8digit=result.get('hsn_8digit'),
+                        source_url=result.get('source_url')
+                    )
             result['input_name'] = cleaned_name
             result['matched_name'] = cleaned_name
             result['name'] = cleaned_name

@@ -105,6 +105,10 @@ def _extract_product_names(df: pd.DataFrame, selected_column: str) -> list[str]:
     return [n for n in names if n]
 
 
+def _master_file_path() -> Path:
+    return Path(__file__).parent.parent.parent / "data" / "hsn_master_from_gst.csv"
+
+
 def _run_bulk_lookup_batch(
     product_names: list[str],
     *,
@@ -442,6 +446,13 @@ def main() -> None:
         unsafe_allow_html=True,
     )
     st.markdown('<p class="small-note">Mode: newest model only (Lookup, Bulk Upload, Database)</p>', unsafe_allow_html=True)
+
+    master_path = _master_file_path()
+    if not master_path.exists():
+        st.warning(
+            "GST master file is missing: data/hsn_master_from_gst.csv. "
+            "4-digit HSN lookup will work, but some 8-digit enrichment may remain blank until this file is available."
+        )
 
     tab_lookup, tab_bulk, tab_database = st.tabs(["Lookup", "Bulk Upload", "Database"])
     with tab_lookup:
